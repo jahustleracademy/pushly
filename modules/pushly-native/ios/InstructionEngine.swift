@@ -16,6 +16,7 @@ final class InstructionEngine {
   private let noBodyGraceWindow: TimeInterval = 0.35
   private let repeatCooldown: TimeInterval = 2.8
   private let minWarningHold: TimeInterval = 1.2
+  private let pushupCloseUpperBodyThreshold = 0.52
 
   private var framingTightCounter = 0
   private var framingTightActive = false
@@ -45,6 +46,9 @@ final class InstructionEngine {
     let occlusion = quality.reasonCodes.contains("upper_body_missing") || quality.reasonCodes.contains("torso_weak") || quality.reasonCodes.contains("arm_weak")
     let lowerBodyMissingForRequiredFullBody = requiresFullBody && quality.poseTrackingState == .trackingUpperBody
     let lowLight = lowLightDetected && quality.logicQuality < 0.5
+    let tooCloseForPushups =
+      (framingTightActive && quality.upperBodyCoverage >= pushupCloseUpperBodyThreshold && quality.upperBodyRenderableCount >= 4) ||
+      (quality.reasonCodes.contains("lower_body_missing") && quality.upperBodyCoverage >= 0.62)
 
     let candidate = chooseInstruction(
       noBodyDetected: noBodyDetected,
@@ -52,6 +56,7 @@ final class InstructionEngine {
       occlusion: occlusion,
       lowerBodyMissingForRequiredFullBody: lowerBodyMissingForRequiredFullBody,
       lowLight: lowLight,
+      tooCloseForPushups: tooCloseForPushups,
       quality: quality,
       repState: repState,
       blockedReasons: blockedReasons
@@ -65,7 +70,7 @@ final class InstructionEngine {
       return nil
     }
 
-    if lastState != .critical,
+    if lastState == .warning,
        currentInstructionState == .warning,
        lastInstruction != nil,
        now - lastInstructionTimestamp < minWarningHold {
@@ -88,6 +93,7 @@ final class InstructionEngine {
     occlusion: Bool,
     lowerBodyMissingForRequiredFullBody: Bool,
     lowLight: Bool,
+    tooCloseForPushups: Bool,
     quality: TrackingQuality,
     repState: PushupState,
     blockedReasons: [String]
@@ -98,6 +104,10 @@ final class InstructionEngine {
 
     if lowerBodyMissingForRequiredFullBody {
       return (.warning, "Upper body is tracked. Step back to include your full body.")
+    }
+
+    if tooCloseForPushups {
+      return (.warning, "Zu nah dran. Geh 20 bis 30 cm weiter weg für stabile Push-up-Erkennung.")
     }
 
     if bodyUnstable {
@@ -126,7 +136,7 @@ final class InstructionEngine {
       return (.stable, "Stark. Rep erkannt.")
     }
     if blockedReasons.contains("measured_evidence_low") {
-      return (.warning, "Bewegung erkannt. Für gültige Reps Arm etwas klarer im Bild halten.")
+      return (.warning, "Bewegung erkannt. Halt Schulter, Ellbogen und Hüfte etwas klarer im Bild.")
     }
     if quality.bodyVisibilityState == .partial {
       return (.warning, "Wir können dich sehen. Position noch leicht anpassen.")

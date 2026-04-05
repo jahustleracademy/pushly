@@ -38,7 +38,9 @@ final class TrackingQualityEvaluator {
     let armScore = armIntegrityScore(joints: joints)
     let spreadScore = framingSpreadScore(joints: joints)
     smoothedSpread = updateSmoothedSpread(spreadScore)
-    let continuityScore = temporalContinuityScore(joints: joints)
+    let pushupFloorState = isLikelyPushupFloorState(joints: joints)
+    let lowerBodySupport = lowerBodySupportScore(joints: joints, floorState: pushupFloorState)
+    let continuityScore = temporalContinuityScore(joints: joints, floorState: pushupFloorState)
     let reliability = reliabilityScore(joints: joints, continuityScore: continuityScore)
 
     let inferredRatio = inferredJointRatio(joints: joints)
@@ -48,7 +50,7 @@ final class TrackingQualityEvaluator {
     if upperBodyRenderable < config.quality.minUpperBodyRenderableJoints {
       reasons.append("upper_body_missing")
     }
-    if poseMode == .fullBody && mergedCoverage.fullBodyCoverage < config.mode.fullBodyCoverageLost {
+    if poseMode == .fullBody && max(mergedCoverage.fullBodyCoverage, lowerBodySupport) < config.mode.fullBodyCoverageLost && !pushupFloorState {
       reasons.append("lower_body_missing")
     }
     if torsoScore < 0.32 {
@@ -57,33 +59,39 @@ final class TrackingQualityEvaluator {
     if armScore < 0.34 {
       reasons.append("arm_weak")
     }
-    if smoothedSpread < 0.24 {
+    if smoothedSpread < (pushupFloorState ? 0.2 : 0.24) {
       reasons.append("framing_tight")
     }
     if lowLightDetected {
       reasons.append("low_light")
     }
-    if inferredRatio > 0.42 {
+    if inferredRatio > 0.42 && !pushupFloorState {
       reasons.append("prediction_heavy")
     }
 
+    let lowerBodyCoverageForQuality = poseMode == .fullBody ? max(mergedCoverage.fullBodyCoverage, lowerBodySupport) : mergedCoverage.fullBodyCoverage
+    let floorStateBonus = pushupFloorState ? min(0.12, lowerBodySupport * 0.12 + torsoScore * 0.04) : 0
     let renderQuality = clamp01(
-      0.3 * renderCoverage +
+      0.22 * renderCoverage +
+      0.12 * lowerBodyCoverageForQuality +
       0.2 * torsoScore +
       0.2 * armScore +
       0.1 * spreadScore +
       0.1 * continuityScore +
-      0.1 * modeConfidence
+      0.06 * modeConfidence +
+      floorStateBonus
     )
 
-    let logicPenalty = lowLightDetected ? 0.06 : 0
+    let logicPenalty = lowLightDetected ? (pushupFloorState ? 0.03 : 0.06) : 0
     let logicQuality = clamp01(
-      0.28 * logicCoverage +
-      0.2 * torsoScore +
-      0.2 * armScore +
+      0.22 * logicCoverage +
+      0.18 * torsoScore +
+      0.18 * armScore +
       0.12 * continuityScore +
       0.1 * mergedCoverage.upperBodyCoverage +
-      0.1 * wristRetention - logicPenalty
+      0.08 * wristRetention +
+      0.12 * lowerBodySupport +
+      floorStateBonus - logicPenalty
     )
 
     let trackingQuality = clamp01(renderQuality * 0.55 + logicQuality * 0.45)
@@ -93,7 +101,7 @@ final class TrackingQualityEvaluator {
       bodyVisibilityState = .notFound
     } else if trackingQuality < config.quality.assistedThreshold {
       bodyVisibilityState = .partial
-    } else if logicQuality < config.quality.pushupLogicMin {
+    } else if logicQuality < config.quality.pushupLogicMin && !pushupFloorState {
       bodyVisibilityState = .assisted
     } else if trackingQuality >= config.quality.goodThreshold {
       bodyVisibilityState = .good
@@ -212,14 +220,58 @@ final class TrackingQualityEvaluator {
     return clamp01(Double(width * 0.65 + height * 0.35))
   }
 
-  private func temporalContinuityScore(joints: [PushlyJointName: TrackedJoint]) -> Double {
+  private func temporalContinuityScore(joints: [PushlyJointName: TrackedJoint], floorState: Bool) -> Double {
     let visible = joints.values.filter(\.isRenderable)
     guard !visible.isEmpty else {
       return 0
     }
     let predictedRatio = Double(visible.filter { $0.sourceType == .predicted }.count) / Double(visible.count)
-    let inferredRatio = Double(visible.filter { $0.sourceType == .inferred }.count) / Double(visible.count)
-    return clamp01(1 - predictedRatio * 0.65 - inferredRatio * 0.35)
+    let lowerBodyJoints: Set<PushlyJointName> = [.leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot]
+    let inferredPenalty = visible.reduce(0.0) { partial, joint in
+      guard joint.sourceType == .inferred else { return partial }
+      if floorState && lowerBodyJoints.contains(joint.name) {
+        return partial + 0.12
+      }
+      return partial + 0.35
+    } / Double(visible.count)
+    return clamp01(1 - predictedRatio * 0.68 - inferredPenalty)
+  }
+
+  private func lowerBodySupportScore(joints: [PushlyJointName: TrackedJoint], floorState: Bool) -> Double {
+    let lowerBodyJoints: [PushlyJointName] = [.leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot]
+    let score = lowerBodyJoints.reduce(0.0) { partial, name in
+      guard let joint = joints[name], joint.isRenderable else { return partial }
+      let sourceWeight: Double
+      switch joint.sourceType {
+      case .measured:
+        sourceWeight = 1.0
+      case .lowConfidenceMeasured:
+        sourceWeight = floorState ? 0.9 : 0.82
+      case .inferred:
+        sourceWeight = floorState ? 0.78 : 0.5
+      case .predicted:
+        sourceWeight = floorState ? 0.35 : 0.24
+      case .missing:
+        sourceWeight = 0
+      }
+      return partial + sourceWeight * Double(max(0.2, joint.renderConfidence))
+    }
+    return clamp01(score / Double(lowerBodyJoints.count) * 1.35)
+  }
+
+  private func isLikelyPushupFloorState(joints: [PushlyJointName: TrackedJoint]) -> Bool {
+    guard let nose = joints[.nose], nose.isRenderable else {
+      return false
+    }
+    let shoulderMid = midpoint(joints[.leftShoulder]?.smoothedPosition, joints[.rightShoulder]?.smoothedPosition)
+    guard let shoulderMid else {
+      return false
+    }
+    let shoulderSpan = hypot(
+      (joints[.rightShoulder]?.smoothedPosition.x ?? shoulderMid.x) - (joints[.leftShoulder]?.smoothedPosition.x ?? shoulderMid.x),
+      (joints[.rightShoulder]?.smoothedPosition.y ?? shoulderMid.y) - (joints[.leftShoulder]?.smoothedPosition.y ?? shoulderMid.y)
+    )
+    return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < 0.16 && Double(shoulderSpan) > 0.08
   }
 
   private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {

@@ -12,8 +12,8 @@ private final class JointSpringAnimator {
 
   private var states: [PushlyJointName: SpringState] = [:]
 
-  private let minStiffness: CGFloat = 0.46
-  private let maxStiffness: CGFloat = 0.74
+  private let minStiffness: CGFloat = 0.75
+  private let maxStiffness: CGFloat = 0.95
   private let stableDamping: CGFloat = 0.86
   private let movingDamping: CGFloat = 0.76
   private let microJitterThresholdPx: CGFloat = 0.9

@@ -251,6 +251,186 @@ final class TemporalJointTrackerTests: XCTestCase {
   }
 }
 
+final class TrackingQualityEvaluatorTests: XCTestCase {
+  func testFloorStateDoesNotPunishInferredLowerBodyAsMissing() {
+    let evaluator = TrackingQualityEvaluator(config: PushlyPoseConfig())
+    let now = CACurrentMediaTime()
+    let joints: [PushlyJointName: TrackedJoint] = [
+      .nose: trackedJoint(.nose, x: 0.5, y: 0.63, render: 0.92, logic: 0.92, source: .measured, now: now),
+      .leftShoulder: trackedJoint(.leftShoulder, x: 0.4, y: 0.54, render: 0.92, logic: 0.92, source: .measured, now: now),
+      .rightShoulder: trackedJoint(.rightShoulder, x: 0.6, y: 0.54, render: 0.92, logic: 0.92, source: .measured, now: now),
+      .leftElbow: trackedJoint(.leftElbow, x: 0.32, y: 0.44, render: 0.88, logic: 0.88, source: .measured, now: now),
+      .rightElbow: trackedJoint(.rightElbow, x: 0.68, y: 0.44, render: 0.88, logic: 0.88, source: .measured, now: now),
+      .leftWrist: trackedJoint(.leftWrist, x: 0.24, y: 0.34, render: 0.84, logic: 0.84, source: .measured, now: now),
+      .rightWrist: trackedJoint(.rightWrist, x: 0.76, y: 0.34, render: 0.84, logic: 0.84, source: .measured, now: now),
+      .leftHip: trackedJoint(.leftHip, x: 0.34, y: 0.5, render: 0.46, logic: 0.22, source: .inferred, now: now),
+      .rightHip: trackedJoint(.rightHip, x: 0.66, y: 0.5, render: 0.46, logic: 0.22, source: .inferred, now: now),
+      .leftAnkle: trackedJoint(.leftAnkle, x: 0.16, y: 0.5, render: 0.36, logic: 0.2, source: .inferred, now: now),
+      .rightAnkle: trackedJoint(.rightAnkle, x: 0.84, y: 0.5, render: 0.36, logic: 0.2, source: .inferred, now: now)
+    ]
+
+    let quality = evaluator.evaluate(
+      joints: joints,
+      lowLightDetected: false,
+      trackingState: .tracking,
+      poseState: .trackingFullBody,
+      poseMode: .fullBody,
+      modeConfidence: 0.82,
+      roiCoverage: 0.4,
+      coverageHint: PoseVisibilityCoverage(upperBodyCoverage: 0.9, fullBodyCoverage: 0.22, handCoverage: 0.8)
+    )
+
+    XCTAssertFalse(quality.reasonCodes.contains("lower_body_missing"))
+    XCTAssertNotEqual(quality.bodyVisibilityState, .partial)
+    XCTAssertGreaterThan(quality.logicQuality, 0.4)
+  }
+
+  private func trackedJoint(
+    _ name: PushlyJointName,
+    x: CGFloat,
+    y: CGFloat,
+    render: Float,
+    logic: Float,
+    source: PushlyJointSourceType,
+    now: TimeInterval
+  ) -> TrackedJoint {
+    TrackedJoint(
+      name: name,
+      rawPosition: CGPoint(x: x, y: y),
+      smoothedPosition: CGPoint(x: x, y: y),
+      velocity: .zero,
+      rawConfidence: render,
+      renderConfidence: render,
+      logicConfidence: logic,
+      visibility: render,
+      presence: render,
+      inFrame: true,
+      sourceType: source,
+      timestamp: now
+    )
+  }
+}
+
+final class PushupRepDetectorStabilityTests: XCTestCase {
+  func testPlankLocksWithInferredLowerBodySupport() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let now = CACurrentMediaTime()
+    let joints: [PushlyJointName: TrackedJoint] = [
+      .nose: trackedJoint(.nose, x: 0.5, y: 0.63, render: 0.9, logic: 0.9, source: .measured, now: now),
+      .leftShoulder: trackedJoint(.leftShoulder, x: 0.4, y: 0.54, render: 0.9, logic: 0.9, source: .measured, now: now),
+      .rightShoulder: trackedJoint(.rightShoulder, x: 0.6, y: 0.54, render: 0.9, logic: 0.9, source: .measured, now: now),
+      .leftElbow: trackedJoint(.leftElbow, x: 0.3, y: 0.52, render: 0.88, logic: 0.88, source: .measured, now: now),
+      .rightElbow: trackedJoint(.rightElbow, x: 0.7, y: 0.52, render: 0.88, logic: 0.88, source: .measured, now: now),
+      .leftWrist: trackedJoint(.leftWrist, x: 0.2, y: 0.5, render: 0.86, logic: 0.86, source: .measured, now: now),
+      .rightWrist: trackedJoint(.rightWrist, x: 0.8, y: 0.5, render: 0.86, logic: 0.86, source: .measured, now: now),
+      .leftHip: trackedJoint(.leftHip, x: 0.34, y: 0.5, render: 0.42, logic: 0.22, source: .inferred, now: now),
+      .rightHip: trackedJoint(.rightHip, x: 0.66, y: 0.5, render: 0.42, logic: 0.22, source: .inferred, now: now),
+      .leftAnkle: trackedJoint(.leftAnkle, x: 0.12, y: 0.5, render: 0.3, logic: 0.2, source: .inferred, now: now),
+      .rightAnkle: trackedJoint(.rightAnkle, x: 0.88, y: 0.5, render: 0.3, logic: 0.2, source: .inferred, now: now)
+    ]
+
+    let quality = TrackingQuality(
+      trackingQuality: 0.76,
+      renderQuality: 0.78,
+      logicQuality: 0.62,
+      bodyVisibilityState: .assisted,
+      trackingState: .tracking,
+      poseTrackingState: .trackingFullBody,
+      poseMode: .fullBody,
+      reasonCodes: [],
+      spreadScore: 0.6,
+      smoothedSpread: 0.6,
+      visibleJointCount: joints.count,
+      upperBodyRenderableCount: 7,
+      reliability: 0.82,
+      roiCoverage: 0.45,
+      fullBodyCoverage: 0.4,
+      upperBodyCoverage: 0.92,
+      handCoverage: 0.9,
+      wristRetention: 1,
+      inferredJointRatio: 0.36,
+      modeConfidence: 0.8
+    )
+
+    var output: RepDetectionOutput?
+    for _ in 0..<config.rep.plankLockFrames {
+      output = detector.update(joints: joints, quality: quality, repTarget: 10)
+    }
+
+    XCTAssertEqual(output?.state, .plankLocked)
+    XCTAssertFalse(output?.blockedReasons.contains("measured_evidence_low") ?? true)
+  }
+
+  private func trackedJoint(
+    _ name: PushlyJointName,
+    x: CGFloat,
+    y: CGFloat,
+    render: Float,
+    logic: Float,
+    source: PushlyJointSourceType,
+    now: TimeInterval
+  ) -> TrackedJoint {
+    TrackedJoint(
+      name: name,
+      rawPosition: CGPoint(x: x, y: y),
+      smoothedPosition: CGPoint(x: x, y: y),
+      velocity: .zero,
+      rawConfidence: render,
+      renderConfidence: render,
+      logicConfidence: logic,
+      visibility: render,
+      presence: render,
+      inFrame: true,
+      sourceType: source,
+      timestamp: now
+    )
+  }
+}
+
+final class InstructionEngineTests: XCTestCase {
+  func testPushupTooCloseInstructionWinsWhenUpperBodyStillVisible() {
+    let engine = InstructionEngine()
+    let quality = TrackingQuality(
+      trackingQuality: 0.72,
+      renderQuality: 0.75,
+      logicQuality: 0.66,
+      bodyVisibilityState: .assisted,
+      trackingState: .tracking,
+      poseTrackingState: .trackingUpperBody,
+      poseMode: .upperBody,
+      reasonCodes: ["framing_tight"],
+      spreadScore: 0.18,
+      smoothedSpread: 0.18,
+      visibleJointCount: 7,
+      upperBodyRenderableCount: 6,
+      reliability: 0.84,
+      roiCoverage: 0.54,
+      fullBodyCoverage: 0.24,
+      upperBodyCoverage: 0.76,
+      handCoverage: 0.7,
+      wristRetention: 0.9,
+      inferredJointRatio: 0.2,
+      modeConfidence: 0.82
+    )
+
+    var instruction: String?
+    let start = CACurrentMediaTime()
+    for step in 0..<6 {
+      instruction = engine.makeInstruction(
+        quality: quality,
+        repState: .bodyFound,
+        blockedReasons: [],
+        lowLightDetected: false,
+        requiresFullBody: false,
+        now: start + Double(step) * 0.3
+      )
+    }
+
+    XCTAssertEqual(instruction, "Zu nah dran. Geh 20 bis 30 cm weiter weg für stabile Push-up-Erkennung.")
+  }
+}
+
 final class PoseBackendCoordinatorTests: XCTestCase {
   private struct MockBackend: PoseBackend {
     let kind: PoseBackendKind

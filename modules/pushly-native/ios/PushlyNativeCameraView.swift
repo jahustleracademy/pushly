@@ -215,23 +215,24 @@ final class PushlyNativeCameraView: ExpoView {
 
     do {
       frameIndex += 1
-      let mirrored = cameraPosition == .front
+      let previewMirrored = cameraPosition == .front
+      let analysisMirrored = false
       let bufferSize = pixelBufferSize(from: sampleBuffer)
-      let orientation = imageOrientation(bufferSize: bufferSize, mirrored: mirrored)
+      let orientation = imageOrientation(bufferSize: bufferSize, mirrored: analysisMirrored)
       latestPixelBufferSize = bufferSize
       latestOrientation = orientation
-      latestMirrored = mirrored
+      latestMirrored = previewMirrored
 
       diagnostics.recordOrientationAndMirror(
         orientation: orientation,
-        mirrored: mirrored,
+        mirrored: previewMirrored,
         previewSize: bounds.size,
         bufferSize: bufferSize
       )
 
       let reacquireSignpost = diagnostics.beginSignpost(.reacquirePass)
       let reacquireObservation = shouldRunReacquire()
-        ? reacquireDetector.detect(sampleBuffer: sampleBuffer, orientation: orientation, mirrored: mirrored)
+        ? reacquireDetector.detect(sampleBuffer: sampleBuffer, orientation: orientation, mirrored: analysisMirrored)
         : nil
       diagnostics.endSignpost(reacquireSignpost)
       if let reacquireObservation {
@@ -254,7 +255,7 @@ final class PushlyNativeCameraView: ExpoView {
         frame: PoseFrameInput(
           sampleBuffer: sampleBuffer,
           orientation: orientation,
-          mirrored: mirrored,
+          mirrored: analysisMirrored,
           roiHint: roiHintPayload.roi,
           timestamp: nowClock,
           targetMode: continuityTracker.bodyMode,
@@ -355,7 +356,7 @@ final class PushlyNativeCameraView: ExpoView {
       latestROIMetadata = PoseROIMetadata(
         bufferSize: bufferSize,
         orientation: orientation,
-        mirrored: mirrored,
+        mirrored: previewMirrored,
         roi: roiHintPayload.roi,
         roiSource: roiHintPayload.source
       )
@@ -390,7 +391,7 @@ final class PushlyNativeCameraView: ExpoView {
         averageJointConfidence: avgConfidence,
         reliability: quality.reliability,
         roi: roiHintPayload.roi,
-        mirrored: mirrored,
+        mirrored: previewMirrored,
         orientation: orientation,
         inferenceDurationMs: processed.backendDiagnostics.durationMs,
         pipelineDurationMs: (CACurrentMediaTime() - processingStarted) * 1000,

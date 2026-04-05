@@ -139,8 +139,9 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
 
     if let connection = output.connection(with: .video) {
-      // Keep capture output unmirrored so pose backends receive raw camera coordinates.
+      // MediaPipe must receive native sensor coordinates, never mirrored preview coordinates.
       configureVideoConnection(connection, isFrontCamera: cameraPosition == .front, shouldMirror: false)
+      connection.isVideoMirrored = false
     }
     if let previewConnection = previewLayer.connection {
       configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front, shouldMirror: cameraPosition == .front)

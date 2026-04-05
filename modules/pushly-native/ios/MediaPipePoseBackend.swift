@@ -28,10 +28,8 @@ final class MediaPipePoseBackend: PoseBackend {
     self.config = config
     self.diagnostics = diagnostics
 
-    if let poseModelPath = Self.locateModel(
-      fileName: config.mediaPipe.poseModelFileName,
-      fileExtension: config.mediaPipe.poseModelFileExtension
-    ) {
+    if let poseModelSelection = Self.locatePoseModel(config: config) {
+      let poseModelPath = poseModelSelection.path
       let gpuOptions = PoseLandmarkerOptions()
       gpuOptions.baseOptions.modelAssetPath = poseModelPath
       gpuOptions.baseOptions.delegate = .gpu
@@ -56,6 +54,7 @@ final class MediaPipePoseBackend: PoseBackend {
       }
       diagnostics?.recordBackendInitialized(kind: .mediapipe, available: poseLandmarker != nil, details: [
         "poseModelFound": "true",
+        "poseModelName": poseModelSelection.fileName,
         "poseModelPath": poseModelPath,
         "poseDelegateRequested": "gpu"
       ])
@@ -105,6 +104,7 @@ final class MediaPipePoseBackend: PoseBackend {
       )
     }
 
+    // Intentionally ignore frame.mirrored. MediaPipe always consumes native, unmirrored camera frames.
     let inputOrientation = mediaPipeInputOrientation(sampleBuffer: frame.sampleBuffer)
     let mpImage = try MPImage(sampleBuffer: frame.sampleBuffer, orientation: inputOrientation)
     let timestampMs = max(0, Int(frame.timestamp * 1000.0))
@@ -420,19 +420,19 @@ final class MediaPipePoseBackend: PoseBackend {
       return output
     }
 
-    let floorState = isLikelyFloorState(joints: output, leftShoulder: leftShoulder, rightShoulder: rightShoulder)
+    let floorState = isLikelyFloorState(joints: output, leftShoulder: leftShoulder)
     let leftHipWeak = isHipWeak(output[.leftHip], floorState: floorState)
     let rightHipWeak = isHipWeak(output[.rightHip], floorState: floorState)
     let tooCloseDetected = leftHipWeak || rightHipWeak
 
     if floorState {
       tooCloseLock.isActive = false
-      if leftHipWeak {
-        output[.leftHip] = occludedJointMeasurement(name: .leftHip, fallbackPoint: leftShoulder.point, timestamp: timestamp)
-      }
-      if rightHipWeak {
-        output[.rightHip] = occludedJointMeasurement(name: .rightHip, fallbackPoint: rightShoulder.point, timestamp: timestamp)
-      }
+      output = applyFloorStateLowerBodyRetention(
+        to: output,
+        leftShoulder: leftShoulder,
+        rightShoulder: rightShoulder,
+        timestamp: timestamp
+      )
       return output
     }
 
@@ -455,7 +455,7 @@ final class MediaPipePoseBackend: PoseBackend {
         )
       }
       tooCloseLock.isActive = true
-      tooCloseLock.holdUntil = timestamp + 0.2
+      tooCloseLock.holdUntil = timestamp + 0.32
     } else if tooCloseLock.isActive && timestamp < tooCloseLock.holdUntil {
       // Keep lock briefly to prevent on/off flicker around threshold.
     } else {
@@ -519,25 +519,104 @@ final class MediaPipePoseBackend: PoseBackend {
 
   private func isLikelyFloorState(
     joints: [PushlyJointName: PoseJointMeasurement],
-    leftShoulder: PoseJointMeasurement,
-    rightShoulder: PoseJointMeasurement
+    leftShoulder: PoseJointMeasurement
   ) -> Bool {
     guard let nose = joints[.nose], nose.confidence >= 0.08 else {
       return false
     }
+    return abs(nose.point.y - leftShoulder.point.y) < 0.15
+  }
 
-    let left = leftShoulder.point
-    let right = rightShoulder.point
-    let shoulderMid = CGPoint(x: (left.x + right.x) * 0.5, y: (left.y + right.y) * 0.5)
-    let shoulderVector = CGVector(dx: right.x - left.x, dy: right.y - left.y)
-    let shoulderSpan = max(0.0001, hypot(shoulderVector.dx, shoulderVector.dy))
-    let toNose = CGVector(dx: nose.point.x - shoulderMid.x, dy: nose.point.y - shoulderMid.y)
-    let verticalDelta = nose.point.y - shoulderMid.y
-    let normalizedVerticalDelta = verticalDelta / shoulderSpan
-    let noseAtShoulderHeight = abs(normalizedVerticalDelta) <= 0.42
-    let shouldersAboveNose = shoulderMid.y >= nose.point.y - shoulderSpan * 0.15
-    let nearHorizontalNoseVector = abs(toNose.dy) <= shoulderSpan * 0.42
-    return noseAtShoulderHeight || shouldersAboveNose || nearHorizontalNoseVector
+  private func applyFloorStateLowerBodyRetention(
+    to joints: [PushlyJointName: PoseJointMeasurement],
+    leftShoulder: PoseJointMeasurement,
+    rightShoulder: PoseJointMeasurement,
+    timestamp: TimeInterval
+  ) -> [PushlyJointName: PoseJointMeasurement] {
+    var output = joints
+
+    let shoulderWidth = max(0.06, hypot(
+      rightShoulder.point.x - leftShoulder.point.x,
+      rightShoulder.point.y - leftShoulder.point.y
+    ))
+    let hipYOffset = shoulderWidth * 0.18
+    let kneeBackOffset = shoulderWidth * 0.82
+    let ankleBackOffset = shoulderWidth * 1.55
+    let footBackOffset = shoulderWidth * 1.95
+
+    let leftHipFallback = CGPoint(x: leftShoulder.point.x - shoulderWidth * 0.55, y: leftShoulder.point.y - hipYOffset)
+    let rightHipFallback = CGPoint(x: rightShoulder.point.x + shoulderWidth * 0.55, y: rightShoulder.point.y - hipYOffset)
+
+    output[.leftHip] = lowConfidenceJointMeasurement(
+      name: .leftHip,
+      point: retainedFloorPoint(existing: output[.leftHip], fallback: leftHipFallback, minimumConfidence: 0.2),
+      timestamp: timestamp
+    )
+    output[.rightHip] = lowConfidenceJointMeasurement(
+      name: .rightHip,
+      point: retainedFloorPoint(existing: output[.rightHip], fallback: rightHipFallback, minimumConfidence: 0.2),
+      timestamp: timestamp
+    )
+
+    let leftHipPoint = output[.leftHip]?.point ?? PoseCoordinateConverter.clampNormalizedPoint(leftHipFallback)
+    let rightHipPoint = output[.rightHip]?.point ?? PoseCoordinateConverter.clampNormalizedPoint(rightHipFallback)
+
+    output[.leftKnee] = lowConfidenceJointMeasurement(
+      name: .leftKnee,
+      point: retainedFloorPoint(
+        existing: output[.leftKnee],
+        fallback: CGPoint(x: leftHipPoint.x - kneeBackOffset, y: leftHipPoint.y),
+        minimumConfidence: 0.16
+      ),
+      timestamp: timestamp
+    )
+    output[.rightKnee] = lowConfidenceJointMeasurement(
+      name: .rightKnee,
+      point: retainedFloorPoint(
+        existing: output[.rightKnee],
+        fallback: CGPoint(x: rightHipPoint.x + kneeBackOffset, y: rightHipPoint.y),
+        minimumConfidence: 0.16
+      ),
+      timestamp: timestamp
+    )
+    output[.leftAnkle] = lowConfidenceJointMeasurement(
+      name: .leftAnkle,
+      point: retainedFloorPoint(
+        existing: output[.leftAnkle],
+        fallback: CGPoint(x: leftHipPoint.x - ankleBackOffset, y: leftHipPoint.y),
+        minimumConfidence: 0.14
+      ),
+      timestamp: timestamp
+    )
+    output[.rightAnkle] = lowConfidenceJointMeasurement(
+      name: .rightAnkle,
+      point: retainedFloorPoint(
+        existing: output[.rightAnkle],
+        fallback: CGPoint(x: rightHipPoint.x + ankleBackOffset, y: rightHipPoint.y),
+        minimumConfidence: 0.14
+      ),
+      timestamp: timestamp
+    )
+    output[.leftFoot] = lowConfidenceJointMeasurement(
+      name: .leftFoot,
+      point: retainedFloorPoint(
+        existing: output[.leftFoot],
+        fallback: CGPoint(x: leftHipPoint.x - footBackOffset, y: leftHipPoint.y),
+        minimumConfidence: 0.12
+      ),
+      timestamp: timestamp
+    )
+    output[.rightFoot] = lowConfidenceJointMeasurement(
+      name: .rightFoot,
+      point: retainedFloorPoint(
+        existing: output[.rightFoot],
+        fallback: CGPoint(x: rightHipPoint.x + footBackOffset, y: rightHipPoint.y),
+        minimumConfidence: 0.12
+      ),
+      timestamp: timestamp
+    )
+
+    return output
   }
 
   private func occludedJointMeasurement(
@@ -548,14 +627,47 @@ final class MediaPipePoseBackend: PoseBackend {
     PoseJointMeasurement(
       name: name,
       point: PoseCoordinateConverter.clampNormalizedPoint(fallbackPoint),
-      confidence: 0.01,
-      visibility: 0.01,
-      presence: 0.01,
+      confidence: 0.08,
+      visibility: 0.08,
+      presence: 0.08,
       sourceType: .lowConfidenceMeasured,
-      inFrame: false,
+      inFrame: true,
       backend: kind,
       measuredAt: timestamp
     )
+  }
+
+  private func lowConfidenceJointMeasurement(
+    name: PushlyJointName,
+    point: CGPoint,
+    timestamp: TimeInterval
+  ) -> PoseJointMeasurement {
+    PoseJointMeasurement(
+      name: name,
+      point: PoseCoordinateConverter.clampNormalizedPoint(point),
+      confidence: 0.18,
+      visibility: 0.18,
+      presence: 0.18,
+      sourceType: .lowConfidenceMeasured,
+      inFrame: true,
+      backend: kind,
+      measuredAt: timestamp
+    )
+  }
+
+  private func retainedFloorPoint(
+    existing: PoseJointMeasurement?,
+    fallback: CGPoint,
+    minimumConfidence: Float
+  ) -> CGPoint {
+    guard let existing,
+          existing.inFrame,
+          existing.confidence >= minimumConfidence,
+          existing.visibility >= minimumConfidence * 0.7,
+          existing.presence >= minimumConfidence * 0.7 else {
+      return PoseCoordinateConverter.clampNormalizedPoint(fallback)
+    }
+    return PoseCoordinateConverter.clampNormalizedPoint(existing.point)
   }
 
   private func mediaPipeInputOrientation(
@@ -656,6 +768,18 @@ final class MediaPipePoseBackend: PoseBackend {
       return 0.5
     }
     return total / samples
+  }
+
+  private static func locatePoseModel(config: PushlyPoseConfig) -> (fileName: String, path: String)? {
+    for modelName in config.mediaPipe.preferredPoseModelFileNames {
+      if let path = locateModel(fileName: modelName, fileExtension: config.mediaPipe.poseModelFileExtension) {
+        return (modelName, path)
+      }
+    }
+    if let path = locateModel(fileName: config.mediaPipe.poseModelFileName, fileExtension: config.mediaPipe.poseModelFileExtension) {
+      return (config.mediaPipe.poseModelFileName, path)
+    }
+    return nil
   }
 
   private static func locateModel(fileName: String, fileExtension: String) -> String? {

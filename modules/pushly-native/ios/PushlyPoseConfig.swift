@@ -18,13 +18,14 @@ struct PushlyPoseConfig {
 
   struct MediaPipe {
     let poseModelFileName = "pose_landmarker_lite"
+    let preferredPoseModelFileNames = ["pose_landmarker_full", "pose_landmarker_lite"]
     let poseModelFileExtension = "task"
     let handModelFileName = "hand_landmarker"
     let handModelFileExtension = "task"
 
-    let minPoseDetectionConfidence: Float = 0.5
-    let minPosePresenceConfidence: Float = 0.5
-    let minPoseTrackingConfidence: Float = 0.5
+    let minPoseDetectionConfidence: Float = 0.42
+    let minPosePresenceConfidence: Float = 0.35
+    let minPoseTrackingConfidence: Float = 0.35
     let minHandDetectionConfidence: Float = 0.45
     let minHandPresenceConfidence: Float = 0.45
     let minHandTrackingConfidence: Float = 0.45
@@ -63,17 +64,17 @@ struct PushlyPoseConfig {
     let renderInferenceMaxAge: TimeInterval = 0.5
     let logicInferenceMaxAge: TimeInterval = 0.22
     let hardExpiration: TimeInterval = 0.95
-    let inferenceConfidenceFloor: Float = 0.08
+    let inferenceConfidenceFloor: Float = 0.12
     let kinematicArmExtensionRatio: CGFloat = 0.92
-    let kinematicLowerBodyMaxAge: TimeInterval = 0.55
-    let kinematicParentConfidenceMin: Float = 0.18
+    let kinematicLowerBodyMaxAge: TimeInterval = 0.9
+    let kinematicParentConfidenceMin: Float = 0.16
   }
 
   struct Quality {
     let notFoundThreshold: Double = 0.2
-    let assistedThreshold: Double = 0.44
+    let assistedThreshold: Double = 0.4
     let goodThreshold: Double = 0.7
-    let pushupLogicMin: Double = 0.52
+    let pushupLogicMin: Double = 0.46
     let renderMin: Double = 0.26
     let lowLightLumaThreshold: Double = 0.2
     let veryLowLightLumaThreshold: Double = 0.13
@@ -104,20 +105,20 @@ struct PushlyPoseConfig {
   }
 
   struct Rep {
-    let minLogicQualityToCount: Double = 0.58
-    let minLogicQualityToProgress: Double = 0.44
+    let minLogicQualityToCount: Double = 0.45
+    let minLogicQualityToProgress: Double = 0.32
     let plankLockFrames: Int = 4
-    let plankAngleMin: CGFloat = 154
-    let descendAngleMax: CGFloat = 122
-    let bottomAngleMax: CGFloat = 93
-    let ascendAngleMin: CGFloat = 120
-    let repCompleteAngleMin: CGFloat = 154
-    let minTorsoStability: Double = 0.42
-    let minMeasuredEvidence: Double = 0.4
-    let shoulderVelocityMinForDescent: CGFloat = 0.0012
-    let shoulderVelocityMinForAscent: CGFloat = 0.0008
-    let elbowSmoothAlpha: CGFloat = 0.3
-    let shoulderSmoothAlpha: CGFloat = 0.26
+    let plankAngleMin: CGFloat = 146
+    let descendAngleMax: CGFloat = 126
+    let bottomAngleMax: CGFloat = 100
+    let ascendAngleMin: CGFloat = 122
+    let repCompleteAngleMin: CGFloat = 150
+    let minTorsoStability: Double = 0.32
+    let minMeasuredEvidence: Double = 0.22
+    let shoulderVelocityMinForDescent: CGFloat = 0.0008
+    let shoulderVelocityMinForAscent: CGFloat = 0.00055
+    let elbowSmoothAlpha: CGFloat = 0.34
+    let shoulderSmoothAlpha: CGFloat = 0.3
   }
 
   struct Pipeline {

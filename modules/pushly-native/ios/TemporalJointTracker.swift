@@ -7,7 +7,6 @@ private struct JointTrackState {
   var smoothedPosition: CGPoint
   var rawPosition: CGPoint
   var velocity: CGVector
-  var acceleration: CGVector
   var renderConfidence: Float
   var logicConfidence: Float
   var visibility: Float
@@ -109,12 +108,11 @@ final class TemporalJointTracker {
     let minCutoff: CGFloat
     let beta: CGFloat
     let dCutoff: CGFloat
-    let predictionLeadSeconds: CGFloat
   }
 
   private let minDetectedJointsForBody = 3
-  private let hardResetGap: TimeInterval = 0.12
-  private let missingJointPredictionMaxAge: TimeInterval = 0.1
+  private let hardResetGap: TimeInterval = 0.32
+  private let missingJointPredictionMaxAge: TimeInterval = 0.42
   private let lowerBodyLinks: [KinematicLink] = [
     KinematicLink(child: .leftHip, parent: .leftShoulder, confidenceMultiplier: 0.82),
     KinematicLink(child: .rightHip, parent: .rightShoulder, confidenceMultiplier: 0.82),
@@ -208,7 +206,6 @@ final class TemporalJointTracker {
         smoothedPosition: joint.smoothedPosition,
         rawPosition: joint.rawPosition,
         velocity: joint.velocity,
-        acceleration: stateByJoint[name]?.acceleration ?? .zero,
         renderConfidence: joint.renderConfidence,
         logicConfidence: joint.logicConfidence,
         visibility: joint.visibility,
@@ -245,40 +242,13 @@ final class TemporalJointTracker {
     now: TimeInterval,
     dt: TimeInterval,
     lowLightDetected: Bool,
-    roiHint: CGRect?
+    roiHint _: CGRect?
   ) -> TrackedJoint {
     let previous = stateByJoint[measurement.name]
     let previousSmoothed = previous?.smoothedPosition ?? measurement.point
-    let previousVelocity = previous?.velocity ?? .zero
-
-    let measuredVelocity = CGVector(
-      dx: (measurement.point.x - previousSmoothed.x) / CGFloat(max(dt, 0.0001)),
-      dy: (measurement.point.y - previousSmoothed.y) / CGFloat(max(dt, 0.0001))
-    )
-
-    let velocity = previousVelocity * 0.24 + measuredVelocity * 0.76
-    let acceleration = CGVector(
-      dx: (velocity.dx - previousVelocity.dx) / CGFloat(max(dt, 0.0001)),
-      dy: (velocity.dy - previousVelocity.dy) / CGFloat(max(dt, 0.0001))
-    )
-
-    let predictedFromDynamics = clamp01(
-      CGPoint(
-        x: previousSmoothed.x + velocity.dx * CGFloat(dt) + 0.5 * acceleration.dx * CGFloat(dt * dt),
-        y: previousSmoothed.y + velocity.dy * CGFloat(dt) + 0.5 * acceleration.dy * CGFloat(dt * dt)
-      )
-    )
 
     let sourceType = sourceTypeForMeasurement(measurement, hasHistory: previous != nil)
     hysteresisVisibilityByJoint[measurement.name] = sourceType != .missing
-
-    let blendedTarget = blendMeasuredAndPredicted(
-      measured: measurement.point,
-      predicted: predictedFromDynamics,
-      confidence: measurement.confidence,
-      sourceType: sourceType,
-      hasHistory: previous != nil
-    )
 
     var oneEuro = filtersByJoint[measurement.name] ?? OneEuroJointFilter()
     if previous == nil || dt > hardResetGap {
@@ -292,39 +262,46 @@ final class TemporalJointTracker {
       lowLightDetected: lowLightDetected
     )
 
-    let filteredTarget = oneEuro.filter(
-      blendedTarget,
+    let stabilizedMeasurement = stabilizedMeasurementPoint(
+      measurement: measurement,
+      previousSmoothed: previousSmoothed,
+      dt: dt
+    )
+
+    let filteredRaw = oneEuro.filter(
+      stabilizedMeasurement,
       dt: dt,
       minCutoff: oneEuroParams.minCutoff,
       beta: oneEuroParams.beta,
       dCutoff: oneEuroParams.dCutoff
     )
     filtersByJoint[measurement.name] = oneEuro
+    let maxStep = maxPerFrameStep(
+      sourceType: sourceType,
+      confidence: measurement.confidence,
+      dt: dt
+    )
+    let filteredTarget = clampStep(from: previousSmoothed, to: filteredRaw, maxStep: maxStep)
 
-    let blendedVelocity = CGVector(
+    let smoothedVelocity = CGVector(
       dx: (filteredTarget.x - previousSmoothed.x) / CGFloat(max(dt, 0.0001)),
       dy: (filteredTarget.y - previousSmoothed.y) / CGFloat(max(dt, 0.0001))
     )
-
-    let roiBoost = roiHint == nil ? 1.0 : 0.94
-    let predictedPos = clamp01(
-      filteredTarget + (blendedVelocity * (oneEuroParams.predictionLeadSeconds * roiBoost))
-    )
-    let lockBlend = sourceType == .inferred ? 0.7 : 0.92
-    let lockedPos = lerp(from: filteredTarget, to: predictedPos, alpha: lockBlend)
 
     let renderConfidence = blendedRenderConfidence(
       sourceType: sourceType,
       measurementConfidence: measurement.confidence,
       previous: previous?.renderConfidence ?? 0
     )
-    let logicConfidence: Float = sourceType == .inferred ? 0 : max(0.1, measurement.confidence)
+    let logicConfidence = logicConfidenceForTrackedMeasurement(
+      sourceType: sourceType,
+      confidence: measurement.confidence
+    )
 
     stateByJoint[measurement.name] = JointTrackState(
-      smoothedPosition: lockedPos,
-      rawPosition: measurement.point,
-      velocity: blendedVelocity,
-      acceleration: acceleration,
+      smoothedPosition: filteredTarget,
+      rawPosition: stabilizedMeasurement,
+      velocity: smoothedVelocity,
       renderConfidence: renderConfidence,
       logicConfidence: logicConfidence,
       visibility: measurement.visibility,
@@ -337,9 +314,9 @@ final class TemporalJointTracker {
 
     return TrackedJoint(
       name: measurement.name,
-      rawPosition: measurement.point,
-      smoothedPosition: lockedPos,
-      velocity: blendedVelocity,
+      rawPosition: stabilizedMeasurement,
+      smoothedPosition: filteredTarget,
+      velocity: smoothedVelocity,
       rawConfidence: measurement.confidence,
       renderConfidence: renderConfidence,
       logicConfidence: logicConfidence,
@@ -366,21 +343,14 @@ final class TemporalJointTracker {
       return nil
     }
 
-    let predicted = clamp01(
-      CGPoint(
-        x: previous.smoothedPosition.x + previous.velocity.dx * CGFloat(dt) + 0.5 * previous.acceleration.dx * CGFloat(dt * dt),
-        y: previous.smoothedPosition.y + previous.velocity.dy * CGFloat(dt) + 0.5 * previous.acceleration.dy * CGFloat(dt * dt)
-      )
-    )
     let decay = Float(exp(-6.0 * ageSinceMeasured / missingJointPredictionMaxAge))
     let renderConfidence = max(0.04, previous.renderConfidence * decay)
-    let dampedVelocity = previous.velocity * 0.8
+    let dampedVelocity = previous.velocity * 0.5
 
     let nextState = JointTrackState(
-      smoothedPosition: predicted,
+      smoothedPosition: previous.smoothedPosition,
       rawPosition: previous.rawPosition,
       velocity: dampedVelocity,
-      acceleration: previous.acceleration * 0.7,
       renderConfidence: renderConfidence,
       logicConfidence: 0,
       visibility: previous.visibility * decay,
@@ -395,7 +365,7 @@ final class TemporalJointTracker {
     return TrackedJoint(
       name: name,
       rawPosition: fallbackPoint ?? previous.rawPosition,
-      smoothedPosition: predicted,
+      smoothedPosition: previous.smoothedPosition,
       velocity: dampedVelocity,
       rawConfidence: 0,
       renderConfidence: renderConfidence,
@@ -431,36 +401,6 @@ final class TemporalJointTracker {
       sourceType: .missing,
       timestamp: now
     )
-  }
-
-  private func blendMeasuredAndPredicted(
-    measured: CGPoint,
-    predicted: CGPoint,
-    confidence: Float,
-    sourceType: PushlyJointSourceType,
-    hasHistory: Bool
-  ) -> CGPoint {
-    guard hasHistory else {
-      return measured
-    }
-
-    if sourceType == .inferred {
-      return lerp(from: predicted, to: measured, alpha: 0.35)
-    }
-
-    let high: Float = max(config.tracker.highConfidenceMin, 0.55)
-    let medium: Float = max(config.tracker.lowConfidenceMin, 0.2)
-
-    if confidence >= high {
-      return measured
-    }
-
-    if confidence >= medium {
-      let t = CGFloat((confidence - medium) / max(0.0001, high - medium))
-      return lerp(from: predicted, to: measured, alpha: t)
-    }
-
-    return predicted
   }
 
   private func sourceTypeForMeasurement(_ measurement: PoseJointMeasurement, hasHistory: Bool) -> PushlyJointSourceType {
@@ -519,6 +459,57 @@ final class TemporalJointTracker {
     }
   }
 
+  private func logicConfidenceForTrackedMeasurement(
+    sourceType: PushlyJointSourceType,
+    confidence: Float
+  ) -> Float {
+    switch sourceType {
+    case .measured:
+      return max(0.24, confidence)
+    case .lowConfidenceMeasured:
+      return max(0.18, confidence * 0.92)
+    case .inferred:
+      return max(0.2, confidence * 0.5)
+    case .predicted, .missing:
+      return 0
+    }
+  }
+
+  private func maxPerFrameStep(
+    sourceType: PushlyJointSourceType,
+    confidence: Float,
+    dt: TimeInterval
+  ) -> CGFloat {
+    let base: CGFloat
+    switch sourceType {
+    case .measured:
+      base = 0.072
+    case .lowConfidenceMeasured:
+      base = 0.056
+    case .inferred:
+      base = 0.046
+    case .predicted, .missing:
+      base = 0.042
+    }
+
+    let confidenceBoost = CGFloat(max(0, min(1, confidence))) * 0.05
+    let frameScale = CGFloat(max(0.7, min(2.0, dt / (1.0 / 30.0))))
+    return max(0.028, (base + confidenceBoost) * frameScale)
+  }
+
+  private func clampStep(from previous: CGPoint, to target: CGPoint, maxStep: CGFloat) -> CGPoint {
+    let delta = CGVector(dx: target.x - previous.x, dy: target.y - previous.y)
+    let distance = sqrt(delta.dx * delta.dx + delta.dy * delta.dy)
+    guard distance > maxStep, distance > 0.0001 else {
+      return target
+    }
+    let scale = maxStep / distance
+    return CGPoint(
+      x: previous.x + delta.dx * scale,
+      y: previous.y + delta.dy * scale
+    )
+  }
+
   private func oneEuroParameters(
     joint: PushlyJointName,
     sourceType: PushlyJointSourceType,
@@ -527,41 +518,86 @@ final class TemporalJointTracker {
   ) -> OneEuroParameters {
     var minCutoff: CGFloat
     var beta: CGFloat
-    let dCutoff: CGFloat = 1.7
+    let dCutoff: CGFloat = 1.0
 
     switch joint {
     case .nose, .head, .leftShoulder, .rightShoulder, .leftHip, .rightHip:
-      minCutoff = 0.05
-      beta = 4.2
+      minCutoff = 0.02
+      beta = 4.5
     case .leftElbow, .rightElbow, .leftKnee, .rightKnee:
-      minCutoff = 0.1
-      beta = 4.6
+      minCutoff = 0.03
+      beta = 5.2
     case .leftWrist, .rightWrist, .leftHand, .rightHand, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot:
-      minCutoff = 0.1
-      beta = 5.0
+      minCutoff = 0.05
+      beta = 6.0
     }
 
     if lowLightDetected {
-      minCutoff *= 0.95
-      beta *= 0.96
+      minCutoff *= 1.1
+      beta *= 0.95
     }
 
     if confidence < 0.35 {
-      minCutoff *= 0.9
-      beta *= 0.92
+      minCutoff *= 1.15
+      beta *= 0.96
     }
 
     if sourceType == .inferred || sourceType == .predicted {
-      minCutoff *= 0.9
+      minCutoff *= 1.1
       beta *= 0.9
     }
 
     return OneEuroParameters(
-      minCutoff: max(0.05, minCutoff),
-      beta: max(4.0, beta),
-      dCutoff: dCutoff,
-      predictionLeadSeconds: 0.0
+      minCutoff: min(0.05, max(0.02, minCutoff)),
+      beta: min(6.0, max(4.5, beta)),
+      dCutoff: dCutoff
     )
+  }
+
+  private func stabilizedMeasurementPoint(
+    measurement: PoseJointMeasurement,
+    previousSmoothed: CGPoint,
+    dt: TimeInterval
+  ) -> CGPoint {
+    let clampedMeasurement = clamp01(measurement.point)
+    let delta = CGVector(
+      dx: clampedMeasurement.x - previousSmoothed.x,
+      dy: clampedMeasurement.y - previousSmoothed.y
+    )
+    let distance = vectorMagnitude(delta)
+    let frameScale = CGFloat(max(0.8, min(1.6, dt / (1.0 / 30.0))))
+    let freezeThreshold = microJitterThreshold(for: measurement.name, confidence: measurement.confidence) * frameScale
+
+    if distance <= freezeThreshold {
+      return previousSmoothed
+    }
+
+    let alpha: CGFloat = {
+      let c = CGFloat(max(0, min(1, measurement.confidence)))
+      // Low confidence should move cautiously; high confidence can follow faster.
+      return min(0.88, max(0.44, 0.44 + c * 0.44))
+    }()
+
+    return CGPoint(
+      x: previousSmoothed.x + (clampedMeasurement.x - previousSmoothed.x) * alpha,
+      y: previousSmoothed.y + (clampedMeasurement.y - previousSmoothed.y) * alpha
+    )
+  }
+
+  private func microJitterThreshold(for joint: PushlyJointName, confidence: Float) -> CGFloat {
+    let base: CGFloat
+    switch joint {
+    case .nose, .head, .leftShoulder, .rightShoulder, .leftHip, .rightHip:
+      base = 0.0026
+    case .leftElbow, .rightElbow, .leftKnee, .rightKnee:
+      base = 0.0029
+    case .leftWrist, .rightWrist, .leftHand, .rightHand, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot:
+      base = 0.0033
+    }
+
+    let confidenceFactor = CGFloat(max(0, min(1, confidence)))
+    let lowConfidenceBoost = (1 - confidenceFactor) * 0.0016
+    return base + lowConfidenceBoost
   }
 
   private func applyKinematicInference(joints: inout [PushlyJointName: TrackedJoint], now: TimeInterval) {
@@ -615,7 +651,7 @@ final class TemporalJointTracker {
     wristJoint.velocity = .zero
     wristJoint.rawConfidence = 0
     wristJoint.renderConfidence = min(shoulderJoint.renderConfidence, elbowJoint.renderConfidence) * 0.5
-    wristJoint.logicConfidence = 0
+    wristJoint.logicConfidence = max(0.18, wristJoint.renderConfidence * 0.42)
     wristJoint.visibility = min(shoulderJoint.visibility, elbowJoint.visibility) * 0.6
     wristJoint.presence = min(shoulderJoint.presence, elbowJoint.presence) * 0.6
     wristJoint.inFrame = true
@@ -677,7 +713,7 @@ final class TemporalJointTracker {
       velocity: .zero,
       rawConfidence: 0,
       renderConfidence: max(config.tracker.inferenceConfidenceFloor, inferredConfidence),
-      logicConfidence: 0,
+      logicConfidence: max(0.2, inferredConfidence * 0.42),
       visibility: min(parentJoint.visibility, inferredConfidence),
       presence: min(parentJoint.presence, inferredConfidence),
       inFrame: true,
@@ -688,7 +724,7 @@ final class TemporalJointTracker {
 
   private func isStableMeasuredJoint(_ joint: TrackedJoint) -> Bool {
     (joint.sourceType == .measured || joint.sourceType == .lowConfidenceMeasured)
-      && joint.renderConfidence >= config.tracker.confidenceHysteresisEnter
+      && joint.renderConfidence >= max(config.tracker.confidenceHysteresisExit, 0.32)
       && joint.inFrame
   }
 
