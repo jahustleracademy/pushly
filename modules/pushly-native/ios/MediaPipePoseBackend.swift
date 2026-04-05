@@ -14,6 +14,10 @@ final class MediaPipePoseBackend: PoseBackend {
     var lockedLeftHip: CGPoint = .zero
     var lockedRightHip: CGPoint = .zero
   }
+  private struct MediaPipeInputTransform {
+    let orientation: UIImage.Orientation
+    let appliedMirroring: Bool
+  }
 
   private let config: PushlyPoseConfig
   private let diagnostics: PoseDiagnostics?
@@ -32,17 +36,32 @@ final class MediaPipePoseBackend: PoseBackend {
       fileName: config.mediaPipe.poseModelFileName,
       fileExtension: config.mediaPipe.poseModelFileExtension
     ) {
-      let poseOptions = PoseLandmarkerOptions()
-      poseOptions.baseOptions.modelAssetPath = poseModelPath
-      poseOptions.runningMode = .video
-      poseOptions.numPoses = config.mediaPipe.numPoses
-      poseOptions.minPoseDetectionConfidence = config.mediaPipe.minPoseDetectionConfidence
-      poseOptions.minPosePresenceConfidence = config.mediaPipe.minPosePresenceConfidence
-      poseOptions.minTrackingConfidence = config.mediaPipe.minPoseTrackingConfidence
-      poseLandmarker = try? PoseLandmarker(options: poseOptions)
+      let gpuOptions = PoseLandmarkerOptions()
+      gpuOptions.baseOptions.modelAssetPath = poseModelPath
+      gpuOptions.baseOptions.delegate = .gpu
+      gpuOptions.runningMode = .video
+      gpuOptions.numPoses = config.mediaPipe.numPoses
+      gpuOptions.minPoseDetectionConfidence = config.mediaPipe.minPoseDetectionConfidence
+      gpuOptions.minPosePresenceConfidence = config.mediaPipe.minPosePresenceConfidence
+      gpuOptions.minTrackingConfidence = config.mediaPipe.minPoseTrackingConfidence
+
+      if let gpuLandmarker = try? PoseLandmarker(options: gpuOptions) {
+        poseLandmarker = gpuLandmarker
+      } else {
+        let cpuOptions = PoseLandmarkerOptions()
+        cpuOptions.baseOptions.modelAssetPath = poseModelPath
+        cpuOptions.baseOptions.delegate = .cpu
+        cpuOptions.runningMode = .video
+        cpuOptions.numPoses = config.mediaPipe.numPoses
+        cpuOptions.minPoseDetectionConfidence = config.mediaPipe.minPoseDetectionConfidence
+        cpuOptions.minPosePresenceConfidence = config.mediaPipe.minPosePresenceConfidence
+        cpuOptions.minTrackingConfidence = config.mediaPipe.minPoseTrackingConfidence
+        poseLandmarker = try? PoseLandmarker(options: cpuOptions)
+      }
       diagnostics?.recordBackendInitialized(kind: .mediapipe, available: poseLandmarker != nil, details: [
         "poseModelFound": "true",
-        "poseModelPath": poseModelPath
+        "poseModelPath": poseModelPath,
+        "poseDelegateRequested": "gpu"
       ])
     } else {
       poseLandmarker = nil
@@ -56,6 +75,7 @@ final class MediaPipePoseBackend: PoseBackend {
        ) {
       let handOptions = HandLandmarkerOptions()
       handOptions.baseOptions.modelAssetPath = handModelPath
+      handOptions.baseOptions.delegate = .gpu
       handOptions.runningMode = .video
       handOptions.numHands = config.mediaPipe.numHands
       handOptions.minHandDetectionConfidence = config.mediaPipe.minHandDetectionConfidence
@@ -89,14 +109,15 @@ final class MediaPipePoseBackend: PoseBackend {
       )
     }
 
-    let orientation = PoseCoordinateConverter.uiOrientation(from: frame.orientation, allowMirrored: false)
-    let mpImage = try MPImage(sampleBuffer: frame.sampleBuffer, orientation: orientation)
+    let inputTransform = mediaPipeInputTransform(sampleBuffer: frame.sampleBuffer, isFrontCamera: frame.mirrored)
+    let mpImage = try MPImage(sampleBuffer: frame.sampleBuffer, orientation: inputTransform.orientation)
     let timestampMs = max(0, Int(frame.timestamp * 1000.0))
 
     let poseResult = try poseLandmarker.detect(videoFrame: mpImage, timestampInMilliseconds: timestampMs)
     let poseLandmarks = poseResult.landmarks.first ?? []
 
-    var mapped = mapPoseLandmarks(poseLandmarks, mirrored: frame.mirrored, timestamp: frame.timestamp)
+    let canonicalMirroringNeeded = frame.mirrored && !inputTransform.appliedMirroring
+    var mapped = mapPoseLandmarks(poseLandmarks, mirrored: canonicalMirroringNeeded, timestamp: frame.timestamp)
     if let roiHint = frame.roiHint,
        frame.reacquireSource == .previousTrack || frame.reacquireSource == .face || frame.reacquireSource == .upperBody {
       mapped = applyROIGating(to: mapped, roi: roiHint)
@@ -111,7 +132,7 @@ final class MediaPipePoseBackend: PoseBackend {
         handRefinedJointCount = applyHandRefinement(
           handResult: handResult,
           joints: &mapped,
-          mirrored: frame.mirrored,
+          mirrored: canonicalMirroringNeeded,
           timestamp: frame.timestamp
         )
       }
@@ -404,7 +425,11 @@ final class MediaPipePoseBackend: PoseBackend {
     if tooCloseDetected {
       let left = leftShoulder.point
       let right = rightShoulder.point
-      let shoulderWidth = max(0.06, hypot(right.x - left.x, right.y - left.y))
+      let shoulderWidthRaw = hypot(right.x - left.x, right.y - left.y)
+      guard shoulderWidthRaw.isFinite else {
+        return output
+      }
+      let shoulderWidth = max(0.06, shoulderWidthRaw)
       let drop = shoulderWidth * 1.5
 
       if !tooCloseLock.isActive || timestamp > tooCloseLock.holdUntil {
@@ -476,6 +501,35 @@ final class MediaPipePoseBackend: PoseBackend {
     guard let hip else { return true }
     let outOfBounds = !hip.inFrame || hip.point.y > 1.0
     return hip.confidence < 0.3 || outOfBounds
+  }
+
+  private func mediaPipeInputTransform(
+    sampleBuffer: CMSampleBuffer,
+    isFrontCamera: Bool
+  ) -> MediaPipeInputTransform {
+    guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+      return MediaPipeInputTransform(
+        orientation: isFrontCamera ? .upMirrored : .up,
+        appliedMirroring: isFrontCamera
+      )
+    }
+
+    let width = CVPixelBufferGetWidth(pixelBuffer)
+    let height = CVPixelBufferGetHeight(pixelBuffer)
+    let isPortraitBuffer = height >= width
+
+    if isPortraitBuffer {
+      return MediaPipeInputTransform(
+        orientation: isFrontCamera ? .upMirrored : .up,
+        appliedMirroring: isFrontCamera
+      )
+    }
+
+    // Sensor-native landscape buffers still need explicit rotation for portrait UI pipelines.
+    return MediaPipeInputTransform(
+      orientation: isFrontCamera ? .leftMirrored : .right,
+      appliedMirroring: isFrontCamera
+    )
   }
 
   private func emptyResult(

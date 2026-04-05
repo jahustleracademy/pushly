@@ -215,9 +215,9 @@ final class PushlyNativeCameraView: ExpoView {
 
     do {
       frameIndex += 1
-      let orientation = imageOrientation()
       let mirrored = cameraPosition == .front
       let bufferSize = pixelBufferSize(from: sampleBuffer)
+      let orientation = imageOrientation(bufferSize: bufferSize, mirrored: mirrored)
       latestPixelBufferSize = bufferSize
       latestOrientation = orientation
       latestMirrored = mirrored
@@ -546,8 +546,12 @@ final class PushlyNativeCameraView: ExpoView {
     }
   }
 
-  private func imageOrientation() -> CGImagePropertyOrientation {
-    cameraPosition == .front ? .leftMirrored : .right
+  private func imageOrientation(bufferSize: CGSize, mirrored: Bool) -> CGImagePropertyOrientation {
+    let isPortraitBuffer = bufferSize.height >= bufferSize.width
+    if isPortraitBuffer {
+      return mirrored ? .upMirrored : .up
+    }
+    return mirrored ? .leftMirrored : .right
   }
 
   private func pixelBufferSize(from sampleBuffer: CMSampleBuffer) -> CGSize {

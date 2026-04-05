@@ -139,10 +139,10 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
 
     if let connection = output.connection(with: .video) {
-      connection.videoOrientation = .portrait
-      if cameraPosition == .front, connection.isVideoMirroringSupported {
-        connection.isVideoMirrored = true
-      }
+      configureVideoConnection(connection, isFrontCamera: cameraPosition == .front)
+    }
+    if let previewConnection = previewLayer.connection {
+      configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front)
     }
 
     session.commitConfiguration()
@@ -318,6 +318,16 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func configuredMaxFPS() -> Int32 {
     config.camera.maxCaptureFPS
+  }
+
+  private func configureVideoConnection(_ connection: AVCaptureConnection, isFrontCamera: Bool) {
+    if connection.isVideoOrientationSupported {
+      connection.videoOrientation = .portrait
+    }
+    if connection.isVideoMirroringSupported {
+      connection.automaticallyAdjustsVideoMirroring = false
+      connection.isVideoMirrored = isFrontCamera
+    }
   }
 
   private func averageProcessingDurationMs() -> Double {
