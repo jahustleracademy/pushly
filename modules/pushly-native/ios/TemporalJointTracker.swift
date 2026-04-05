@@ -135,6 +135,11 @@ final class TemporalJointTracker {
 
     for jointName in PushlyJointName.allCases {
       if let measurement = measured[jointName] {
+        if measurement.sourceType == .missing {
+          next[jointName] = explicitMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp)
+          continue
+        }
+
         let tracked = updateMeasuredJoint(
           measurement,
           now: frameTimestamp,
@@ -216,7 +221,7 @@ final class TemporalJointTracker {
       dy: (measurement.point.y - previousSmoothed.y) / CGFloat(max(dt, 0.0001))
     )
 
-    let velocity = previousVelocity * 0.32 + measuredVelocity * 0.68
+    let velocity = previousVelocity * 0.24 + measuredVelocity * 0.76
     let acceleration = CGVector(
       dx: (velocity.dx - previousVelocity.dx) / CGFloat(max(dt, 0.0001)),
       dy: (velocity.dy - previousVelocity.dy) / CGFloat(max(dt, 0.0001))
@@ -269,7 +274,7 @@ final class TemporalJointTracker {
     let predictedPos = clamp01(
       filteredTarget + (blendedVelocity * (oneEuroParams.predictionLeadSeconds * roiBoost))
     )
-    let lockBlend = sourceType == .inferred ? 0.88 : 1.0
+    let lockBlend = sourceType == .inferred ? 0.7 : 0.92
     let lockedPos = lerp(from: filteredTarget, to: predictedPos, alpha: lockBlend)
 
     let renderConfidence = blendedRenderConfidence(
@@ -362,6 +367,30 @@ final class TemporalJointTracker {
     )
   }
 
+  private func explicitMissingJoint(
+    name: PushlyJointName,
+    fallbackPoint: CGPoint,
+    now: TimeInterval
+  ) -> TrackedJoint {
+    filtersByJoint[name] = nil
+    stateByJoint[name] = nil
+    let clamped = clamp01(fallbackPoint)
+    return TrackedJoint(
+      name: name,
+      rawPosition: clamped,
+      smoothedPosition: clamped,
+      velocity: .zero,
+      rawConfidence: 0,
+      renderConfidence: 0,
+      logicConfidence: 0,
+      visibility: 0,
+      presence: 0,
+      inFrame: false,
+      sourceType: .missing,
+      timestamp: now
+    )
+  }
+
   private func blendMeasuredAndPredicted(
     measured: CGPoint,
     predicted: CGPoint,
@@ -393,6 +422,9 @@ final class TemporalJointTracker {
   }
 
   private func sourceTypeForMeasurement(_ measurement: PoseJointMeasurement, hasHistory: Bool) -> PushlyJointSourceType {
+    if measurement.sourceType == .missing {
+      return .missing
+    }
     if measurement.sourceType == .inferred {
       return .inferred
     }
@@ -435,46 +467,46 @@ final class TemporalJointTracker {
   ) -> OneEuroParameters {
     var minCutoff: CGFloat
     var beta: CGFloat
-    let dCutoff: CGFloat = 1.2
+    let dCutoff: CGFloat = 1.7
     var predictionLead: CGFloat
 
     switch joint {
     case .nose, .head, .leftShoulder, .rightShoulder, .leftHip, .rightHip:
-      minCutoff = 0.28
-      beta = 1.15
-      predictionLead = 0.022
+      minCutoff = 0.22
+      beta = 2.2
+      predictionLead = 0.012
     case .leftElbow, .rightElbow, .leftKnee, .rightKnee:
-      minCutoff = 0.36
-      beta = 1.35
-      predictionLead = 0.028
+      minCutoff = 0.24
+      beta = 2.6
+      predictionLead = 0.014
     case .leftWrist, .rightWrist, .leftHand, .rightHand, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot:
-      minCutoff = 0.48
-      beta = 1.8
-      predictionLead = 0.034
+      minCutoff = 0.26
+      beta = 3.1
+      predictionLead = 0.016
     }
 
     if lowLightDetected {
-      minCutoff *= 0.82
-      beta *= 0.88
-      predictionLead *= 0.85
+      minCutoff *= 0.92
+      beta *= 0.9
+      predictionLead *= 0.88
     }
 
     if confidence < 0.35 {
-      minCutoff *= 0.72
-      beta *= 0.65
+      minCutoff *= 0.82
+      beta *= 0.78
     }
 
     if sourceType == .inferred || sourceType == .predicted {
-      minCutoff *= 0.65
-      beta *= 0.55
+      minCutoff *= 0.78
+      beta *= 0.7
       predictionLead *= 0.75
     }
 
     return OneEuroParameters(
-      minCutoff: max(0.08, minCutoff),
-      beta: max(0.1, beta),
+      minCutoff: max(0.12, minCutoff),
+      beta: max(0.2, beta),
       dCutoff: dCutoff,
-      predictionLeadSeconds: max(0.008, min(0.045, predictionLead))
+      predictionLeadSeconds: max(0.004, min(0.022, predictionLead))
     )
   }
 

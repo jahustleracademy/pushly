@@ -8,11 +8,18 @@ import MediaPipeTasksVision
 import UIKit
 
 final class MediaPipePoseBackend: PoseBackend {
+  private struct TooCloseLockState {
+    var isActive = false
+    var holdUntil: TimeInterval = 0
+    var lockedLeftHip: CGPoint = .zero
+    var lockedRightHip: CGPoint = .zero
+  }
+
   private let config: PushlyPoseConfig
   private let diagnostics: PoseDiagnostics?
   private let poseLandmarker: PoseLandmarker?
   private let handLandmarker: HandLandmarker?
-  private let heuristics = PoseHeuristicsSolver()
+  private var tooCloseLock = TooCloseLockState()
 
   var kind: PoseBackendKind { .mediapipe }
   var isAvailable: Bool { poseLandmarker != nil }
@@ -124,7 +131,7 @@ final class MediaPipePoseBackend: PoseBackend {
       )
     }
 
-    mapped = heuristics.applyTooCloseHeuristics(joints: mapped, backend: kind, timestamp: frame.timestamp)
+    mapped = applyTooCloseHardCutoff(to: mapped, timestamp: frame.timestamp)
 
     let detectedJointCount = mapped.count
     let measured = detectedJointCount >= 3 ? mapped : [:]
@@ -221,7 +228,7 @@ final class MediaPipePoseBackend: PoseBackend {
         visibility: visibility,
         presence: presence,
         sourceType: confidence >= config.tracker.lowConfidenceMin ? .measured : .lowConfidenceMeasured,
-        inFrame: confidence > 0.01,
+        inFrame: landmark.x >= 0 && landmark.x <= 1 && landmark.y >= 0 && landmark.y <= 1,
         backend: kind,
         measuredAt: timestamp
       )
@@ -376,6 +383,99 @@ final class MediaPipePoseBackend: PoseBackend {
       }
     }
     return output
+  }
+
+  private func applyTooCloseHardCutoff(
+    to joints: [PushlyJointName: PoseJointMeasurement],
+    timestamp: TimeInterval
+  ) -> [PushlyJointName: PoseJointMeasurement] {
+    var output = joints
+
+    guard let leftShoulder = output[.leftShoulder], leftShoulder.confidence > 0.45,
+          let rightShoulder = output[.rightShoulder], rightShoulder.confidence > 0.45 else {
+      tooCloseLock.isActive = false
+      return output
+    }
+
+    let leftHipWeak = isHipWeak(output[.leftHip])
+    let rightHipWeak = isHipWeak(output[.rightHip])
+    let tooCloseDetected = leftHipWeak || rightHipWeak
+
+    if tooCloseDetected {
+      let left = leftShoulder.point
+      let right = rightShoulder.point
+      let shoulderWidth = max(0.06, hypot(right.x - left.x, right.y - left.y))
+      let drop = shoulderWidth * 1.5
+
+      if !tooCloseLock.isActive || timestamp > tooCloseLock.holdUntil {
+        tooCloseLock.lockedLeftHip = PoseCoordinateConverter.clampNormalizedPoint(
+          CGPoint(x: left.x, y: left.y - drop)
+        )
+        tooCloseLock.lockedRightHip = PoseCoordinateConverter.clampNormalizedPoint(
+          CGPoint(x: right.x, y: right.y - drop)
+        )
+      }
+      tooCloseLock.isActive = true
+      tooCloseLock.holdUntil = timestamp + 0.2
+    } else if tooCloseLock.isActive && timestamp < tooCloseLock.holdUntil {
+      // Keep lock briefly to prevent on/off flicker around threshold.
+    } else {
+      tooCloseLock.isActive = false
+    }
+
+    guard tooCloseLock.isActive else {
+      return output
+    }
+
+    let inferredVisibility = min(leftShoulder.visibility, rightShoulder.visibility) * 0.8
+    let inferredPresence = min(leftShoulder.presence, rightShoulder.presence) * 0.8
+    let inferredConfidence = min(leftShoulder.confidence, rightShoulder.confidence) * 0.75
+
+    output[.leftHip] = PoseJointMeasurement(
+      name: .leftHip,
+      point: tooCloseLock.lockedLeftHip,
+      confidence: inferredConfidence,
+      visibility: inferredVisibility,
+      presence: inferredPresence,
+      sourceType: .inferred,
+      inFrame: true,
+      backend: kind,
+      measuredAt: timestamp
+    )
+    output[.rightHip] = PoseJointMeasurement(
+      name: .rightHip,
+      point: tooCloseLock.lockedRightHip,
+      confidence: inferredConfidence,
+      visibility: inferredVisibility,
+      presence: inferredPresence,
+      sourceType: .inferred,
+      inFrame: true,
+      backend: kind,
+      measuredAt: timestamp
+    )
+
+    let lowerBodyToSuppress: [PushlyJointName] = [.leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot]
+    for jointName in lowerBodyToSuppress {
+      output[jointName] = PoseJointMeasurement(
+        name: jointName,
+        point: output[jointName]?.point ?? CGPoint(x: 0.5, y: 0.0),
+        confidence: 0,
+        visibility: 0,
+        presence: 0,
+        sourceType: .missing,
+        inFrame: false,
+        backend: kind,
+        measuredAt: timestamp
+      )
+    }
+
+    return output
+  }
+
+  private func isHipWeak(_ hip: PoseJointMeasurement?) -> Bool {
+    guard let hip else { return true }
+    let outOfBounds = !hip.inFrame || hip.point.y > 1.0
+    return hip.confidence < 0.3 || outOfBounds
   }
 
   private func emptyResult(

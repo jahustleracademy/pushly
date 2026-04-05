@@ -12,11 +12,12 @@ private final class JointSpringAnimator {
 
   private var states: [PushlyJointName: SpringState] = [:]
 
-  private let baseStiffness: CGFloat = 0.2
-  private let stableDamping: CGFloat = 0.85
-  private let movingDamping: CGFloat = 0.7
-  private let microJitterThresholdPx: CGFloat = 2.0
-  private let maxVelocityPerFrame: CGFloat = 0.03
+  private let minStiffness: CGFloat = 0.46
+  private let maxStiffness: CGFloat = 0.74
+  private let stableDamping: CGFloat = 0.86
+  private let movingDamping: CGFloat = 0.76
+  private let microJitterThresholdPx: CGFloat = 0.9
+  private let maxVelocityPerFrame: CGFloat = 0.085
 
   func updateTargets(_ joints: [PushlyJointName: TrackedJoint]) {
     for (name, joint) in joints {
@@ -42,9 +43,9 @@ private final class JointSpringAnimator {
     avgBodyVelocity: Double
   ) -> [PushlyJointName: CGPoint] {
     let frameScale = max(0.6, min(1.6, CGFloat(dt * 60)))
-    let stableBody = avgBodyVelocity < 0.07
-    let dampingFactor = stableBody ? stableDamping : movingDamping
-    let stiffness = stableBody ? max(0.15, baseStiffness - 0.03) : min(0.25, baseStiffness + 0.03)
+    let speedNorm = min(1, max(0, CGFloat(avgBodyVelocity / 0.22)))
+    let dampingFactor = stableDamping - (stableDamping - movingDamping) * speedNorm
+    let stiffness = minStiffness + (maxStiffness - minStiffness) * speedNorm
 
     var output: [PushlyJointName: CGPoint] = [:]
 
@@ -61,7 +62,11 @@ private final class JointSpringAnimator {
       var nextVelocity = clampVelocity(dampedVelocity, maxMagnitude: maxVelocityPerFrame * frameScale)
       let distancePx = normalizedDistanceToPixels(dx: dx, dy: dy, bounds: bounds)
       if distancePx < microJitterThresholdPx {
-        nextVelocity = CGVector(dx: nextVelocity.dx * 0.2, dy: nextVelocity.dy * 0.2)
+        state.currentPosition = state.targetPosition
+        state.velocity = CGVector(dx: nextVelocity.dx * 0.1, dy: nextVelocity.dy * 0.1)
+        states[name] = state
+        output[name] = state.currentPosition
+        continue
       }
 
       var nextPosition = CGPoint(

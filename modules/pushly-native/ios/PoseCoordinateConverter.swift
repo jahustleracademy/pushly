@@ -150,9 +150,12 @@ enum PoseCoordinateConverter {
       pixelBufferSize: orientedBuffer,
       videoGravity: projection.videoGravity
     )
+
+    // Canonical is bottom-left origin; preview layer space is top-left.
+    let topLeft = CGPoint(x: normalized.x, y: 1 - normalized.y)
     return CGPoint(
-      x: contentRect.minX + normalized.x * contentRect.width,
-      y: contentRect.minY + (1 - normalized.y) * contentRect.height
+      x: contentRect.minX + topLeft.x * contentRect.width,
+      y: contentRect.minY + topLeft.y * contentRect.height
     )
   }
 
@@ -253,28 +256,24 @@ enum PoseCoordinateConverter {
       return previewBounds
     }
 
-    let previewAspect = previewBounds.width / max(1, previewBounds.height)
-    let bufferAspect = pixelBufferSize.width / max(1, pixelBufferSize.height)
+    let previewW = max(0.001, previewBounds.width)
+    let previewH = max(0.001, previewBounds.height)
+    let bufferW = max(0.001, pixelBufferSize.width)
+    let bufferH = max(0.001, pixelBufferSize.height)
 
+    let scale: CGFloat
     if videoGravity == .resizeAspectFill {
-      if bufferAspect > previewAspect {
-        let scaledWidth = previewBounds.height * bufferAspect
-        let x = (previewBounds.width - scaledWidth) * 0.5
-        return CGRect(x: x, y: 0, width: scaledWidth, height: previewBounds.height)
-      }
-      let scaledHeight = previewBounds.width / max(0.001, bufferAspect)
-      let y = (previewBounds.height - scaledHeight) * 0.5
-      return CGRect(x: 0, y: y, width: previewBounds.width, height: scaledHeight)
+      scale = max(previewW / bufferW, previewH / bufferH)
+    } else {
+      // .resizeAspect (fit)
+      scale = min(previewW / bufferW, previewH / bufferH)
     }
 
-    if bufferAspect > previewAspect {
-      let scaledHeight = previewBounds.width / max(0.001, bufferAspect)
-      let y = (previewBounds.height - scaledHeight) * 0.5
-      return CGRect(x: 0, y: y, width: previewBounds.width, height: scaledHeight)
-    }
-    let scaledWidth = previewBounds.height * bufferAspect
-    let x = (previewBounds.width - scaledWidth) * 0.5
-    return CGRect(x: x, y: 0, width: scaledWidth, height: previewBounds.height)
+    let scaledW = bufferW * scale
+    let scaledH = bufferH * scale
+    let x = previewBounds.minX + (previewW - scaledW) * 0.5
+    let y = previewBounds.minY + (previewH - scaledH) * 0.5
+    return CGRect(x: x, y: y, width: scaledW, height: scaledH)
   }
 
   private static func orientedPixelBufferSize(
