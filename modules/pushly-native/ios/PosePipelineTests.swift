@@ -42,8 +42,7 @@ final class PoseCoordinateConverterTests: XCTestCase {
       pixelBufferSize: CGSize(width: 1920, height: 1080),
       videoGravity: .resizeAspectFill,
       orientation: .right,
-      isMirrored: false,
-      canonicalAlreadyMirrored: true
+      isMirrored: false
     )
 
     let center = PoseCoordinateConverter.pointFromCanonical(CGPoint(x: 0.5, y: 0.5), projection: projection)
@@ -54,14 +53,13 @@ final class PoseCoordinateConverterTests: XCTestCase {
     XCTAssertLessThan(leftEdge.x, 0) // Expected cropped content outside visible viewport.
   }
 
-  func testProjectionMirrorsOnlyWhenCanonicalNotMirrored() {
+  func testProjectionMirrorsFrontCameraOverlay() {
     let projection = PoseCoordinateConverter.ProjectionContext(
       previewBounds: CGRect(x: 0, y: 0, width: 300, height: 600),
       pixelBufferSize: CGSize(width: 1920, height: 1080),
       videoGravity: .resizeAspectFill,
       orientation: .right,
-      isMirrored: true,
-      canonicalAlreadyMirrored: false
+      isMirrored: true
     )
 
     let leftCanonical = PoseCoordinateConverter.pointFromCanonical(CGPoint(x: 0.1, y: 0.5), projection: projection)
@@ -155,6 +153,101 @@ final class TrackContinuityManagerTests: XCTestCase {
     joints[.leftFoot] = PoseJointMeasurement(name: .leftFoot, point: CGPoint(x: 0.43, y: 0.07), confidence: 0.8, backend: .mediapipe)
     joints[.rightFoot] = PoseJointMeasurement(name: .rightFoot, point: CGPoint(x: 0.57, y: 0.07), confidence: 0.8, backend: .mediapipe)
     return joints
+  }
+}
+
+final class TemporalJointTrackerTests: XCTestCase {
+  func testConfidenceHysteresisKeepsJointAliveAcrossMidConfidenceDip() {
+    let config = PushlyPoseConfig()
+    let tracker = TemporalJointTracker(config: config)
+    let now = CACurrentMediaTime()
+
+    _ = tracker.update(
+      measured: trackedUpperBody(hipConfidence: 0.82),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now
+    )
+
+    let dipped = tracker.update(
+      measured: trackedUpperBody(hipConfidence: 0.28),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now + 0.033
+    )
+
+    XCTAssertEqual(dipped[.leftHip]?.sourceType, .lowConfidenceMeasured)
+    XCTAssertTrue(dipped[.leftHip]?.isRenderable == true)
+  }
+
+  func testKinematicLockPreservesLowerBodyDuringOcclusion() {
+    let config = PushlyPoseConfig()
+    let tracker = TemporalJointTracker(config: config)
+    let now = CACurrentMediaTime()
+
+    _ = tracker.update(
+      measured: trackedFullBody(),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now
+    )
+
+    let occluded = tracker.update(
+      measured: occludedPushupUpperBody(),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now + 0.033
+    )
+
+    XCTAssertEqual(occluded[.leftHip]?.sourceType, .inferred)
+    XCTAssertEqual(occluded[.leftKnee]?.sourceType, .inferred)
+    XCTAssertEqual(occluded[.leftAnkle]?.sourceType, .inferred)
+    XCTAssertTrue(occluded[.leftFoot]?.isRenderable == true)
+  }
+
+  private func trackedUpperBody(hipConfidence: Float) -> [PushlyJointName: PoseJointMeasurement] {
+    var joints: [PushlyJointName: PoseJointMeasurement] = [
+      .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.5, y: 0.84), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftShoulder: PoseJointMeasurement(name: .leftShoulder, point: CGPoint(x: 0.42, y: 0.72), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightShoulder: PoseJointMeasurement(name: .rightShoulder, point: CGPoint(x: 0.58, y: 0.72), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe)
+    ]
+    joints[.leftHip] = PoseJointMeasurement(
+      name: .leftHip,
+      point: CGPoint(x: 0.45, y: 0.5),
+      confidence: hipConfidence,
+      visibility: hipConfidence,
+      presence: hipConfidence,
+      sourceType: .measured,
+      inFrame: true,
+      backend: .mediapipe
+    )
+    return joints
+  }
+
+  private func trackedFullBody() -> [PushlyJointName: PoseJointMeasurement] {
+    [
+      .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.5, y: 0.84), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .leftShoulder: PoseJointMeasurement(name: .leftShoulder, point: CGPoint(x: 0.42, y: 0.72), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .rightShoulder: PoseJointMeasurement(name: .rightShoulder, point: CGPoint(x: 0.58, y: 0.72), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .leftHip: PoseJointMeasurement(name: .leftHip, point: CGPoint(x: 0.45, y: 0.49), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightHip: PoseJointMeasurement(name: .rightHip, point: CGPoint(x: 0.55, y: 0.49), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftKnee: PoseJointMeasurement(name: .leftKnee, point: CGPoint(x: 0.44, y: 0.28), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightKnee: PoseJointMeasurement(name: .rightKnee, point: CGPoint(x: 0.56, y: 0.28), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftAnkle: PoseJointMeasurement(name: .leftAnkle, point: CGPoint(x: 0.43, y: 0.12), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe),
+      .rightAnkle: PoseJointMeasurement(name: .rightAnkle, point: CGPoint(x: 0.57, y: 0.12), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe),
+      .leftFoot: PoseJointMeasurement(name: .leftFoot, point: CGPoint(x: 0.41, y: 0.08), confidence: 0.86, visibility: 0.86, presence: 0.86, backend: .mediapipe),
+      .rightFoot: PoseJointMeasurement(name: .rightFoot, point: CGPoint(x: 0.59, y: 0.08), confidence: 0.86, visibility: 0.86, presence: 0.86, backend: .mediapipe)
+    ]
+  }
+
+  private func occludedPushupUpperBody() -> [PushlyJointName: PoseJointMeasurement] {
+    [
+      .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.51, y: 0.76), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftShoulder: PoseJointMeasurement(name: .leftShoulder, point: CGPoint(x: 0.43, y: 0.65), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightShoulder: PoseJointMeasurement(name: .rightShoulder, point: CGPoint(x: 0.59, y: 0.65), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftHip: PoseJointMeasurement(name: .leftHip, point: CGPoint(x: 0.45, y: 0.49), confidence: 0.01, visibility: 0.01, presence: 0.01, sourceType: .lowConfidenceMeasured, inFrame: false, backend: .mediapipe),
+      .rightHip: PoseJointMeasurement(name: .rightHip, point: CGPoint(x: 0.55, y: 0.49), confidence: 0.01, visibility: 0.01, presence: 0.01, sourceType: .lowConfidenceMeasured, inFrame: false, backend: .mediapipe)
+    ]
   }
 }
 

@@ -428,10 +428,10 @@ final class MediaPipePoseBackend: PoseBackend {
     if floorState {
       tooCloseLock.isActive = false
       if leftHipWeak {
-        output[.leftHip] = missingJointMeasurement(name: .leftHip, fallbackPoint: leftShoulder.point, timestamp: timestamp)
+        output[.leftHip] = occludedJointMeasurement(name: .leftHip, fallbackPoint: leftShoulder.point, timestamp: timestamp)
       }
       if rightHipWeak {
-        output[.rightHip] = missingJointMeasurement(name: .rightHip, fallbackPoint: rightShoulder.point, timestamp: timestamp)
+        output[.rightHip] = occludedJointMeasurement(name: .rightHip, fallbackPoint: rightShoulder.point, timestamp: timestamp)
       }
       return output
     }
@@ -495,16 +495,10 @@ final class MediaPipePoseBackend: PoseBackend {
 
     let lowerBodyToSuppress: [PushlyJointName] = [.leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot]
     for jointName in lowerBodyToSuppress {
-      output[jointName] = PoseJointMeasurement(
+      output[jointName] = occludedJointMeasurement(
         name: jointName,
-        point: output[jointName]?.point ?? CGPoint(x: 0.5, y: 0.0),
-        confidence: 0,
-        visibility: 0,
-        presence: 0,
-        sourceType: .missing,
-        inFrame: false,
-        backend: kind,
-        measuredAt: timestamp
+        fallbackPoint: output[jointName]?.point ?? CGPoint(x: 0.5, y: 0.0),
+        timestamp: timestamp
       )
     }
 
@@ -546,7 +540,7 @@ final class MediaPipePoseBackend: PoseBackend {
     return noseAtShoulderHeight || shouldersAboveNose || nearHorizontalNoseVector
   }
 
-  private func missingJointMeasurement(
+  private func occludedJointMeasurement(
     name: PushlyJointName,
     fallbackPoint: CGPoint,
     timestamp: TimeInterval
@@ -554,10 +548,10 @@ final class MediaPipePoseBackend: PoseBackend {
     PoseJointMeasurement(
       name: name,
       point: PoseCoordinateConverter.clampNormalizedPoint(fallbackPoint),
-      confidence: 0,
-      visibility: 0,
-      presence: 0,
-      sourceType: .missing,
+      confidence: 0.01,
+      visibility: 0.01,
+      presence: 0.01,
+      sourceType: .lowConfidenceMeasured,
       inFrame: false,
       backend: kind,
       measuredAt: timestamp

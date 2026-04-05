@@ -30,22 +30,19 @@ enum PoseCoordinateConverter {
     let videoGravity: AVLayerVideoGravity
     let orientation: CGImagePropertyOrientation
     let isMirrored: Bool
-    let canonicalAlreadyMirrored: Bool
 
     init(
       previewBounds: CGRect,
       pixelBufferSize: CGSize,
       videoGravity: AVLayerVideoGravity,
       orientation: CGImagePropertyOrientation = .up,
-      isMirrored: Bool = false,
-      canonicalAlreadyMirrored: Bool = true
+      isMirrored: Bool = false
     ) {
       self.previewBounds = previewBounds
       self.pixelBufferSize = pixelBufferSize
       self.videoGravity = videoGravity
       self.orientation = orientation
       self.isMirrored = isMirrored
-      self.canonicalAlreadyMirrored = canonicalAlreadyMirrored
     }
   }
 

@@ -18,6 +18,12 @@ private struct JointTrackState {
   var lastMeasuredTime: TimeInterval
 }
 
+private struct KinematicOffsetState {
+  var vector: CGVector
+  var timestamp: TimeInterval
+  var confidence: Float
+}
+
 private struct LowPassFilter1D {
   var initialized = false
   var value: CGFloat = 0
@@ -93,6 +99,12 @@ private struct OneEuroJointFilter {
 }
 
 final class TemporalJointTracker {
+  private struct KinematicLink {
+    let child: PushlyJointName
+    let parent: PushlyJointName
+    let confidenceMultiplier: Float
+  }
+
   private struct OneEuroParameters {
     let minCutoff: CGFloat
     let beta: CGFloat
@@ -103,10 +115,22 @@ final class TemporalJointTracker {
   private let minDetectedJointsForBody = 3
   private let hardResetGap: TimeInterval = 0.12
   private let missingJointPredictionMaxAge: TimeInterval = 0.1
+  private let lowerBodyLinks: [KinematicLink] = [
+    KinematicLink(child: .leftHip, parent: .leftShoulder, confidenceMultiplier: 0.82),
+    KinematicLink(child: .rightHip, parent: .rightShoulder, confidenceMultiplier: 0.82),
+    KinematicLink(child: .leftKnee, parent: .leftHip, confidenceMultiplier: 0.74),
+    KinematicLink(child: .rightKnee, parent: .rightHip, confidenceMultiplier: 0.74),
+    KinematicLink(child: .leftAnkle, parent: .leftKnee, confidenceMultiplier: 0.66),
+    KinematicLink(child: .rightAnkle, parent: .rightKnee, confidenceMultiplier: 0.66),
+    KinematicLink(child: .leftFoot, parent: .leftAnkle, confidenceMultiplier: 0.62),
+    KinematicLink(child: .rightFoot, parent: .rightAnkle, confidenceMultiplier: 0.62)
+  ]
 
   private let config: PushlyPoseConfig
   private var stateByJoint: [PushlyJointName: JointTrackState] = [:]
   private var filtersByJoint: [PushlyJointName: OneEuroJointFilter] = [:]
+  private var hysteresisVisibilityByJoint: [PushlyJointName: Bool] = [:]
+  private var lockedOffsetsByJoint: [PushlyJointName: KinematicOffsetState] = [:]
   private var lastTimestamp: TimeInterval = 0
   private var lastValidFrameTime: TimeInterval?
 
@@ -136,7 +160,11 @@ final class TemporalJointTracker {
     for jointName in PushlyJointName.allCases {
       if let measurement = measured[jointName] {
         if measurement.sourceType == .missing {
-          next[jointName] = explicitMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp)
+          if let tracked = updateMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp, dt: dt) {
+            next[jointName] = tracked
+          } else {
+            next[jointName] = explicitMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp)
+          }
           continue
         }
 
@@ -157,14 +185,19 @@ final class TemporalJointTracker {
     }
 
     if hasValidBody {
+      updateStableOffsets(from: next, now: frameTimestamp)
       applyKinematicInference(joints: &next, now: frameTimestamp)
+    }
+
+    for jointName in PushlyJointName.allCases {
+      hysteresisVisibilityByJoint[jointName] = next[jointName]?.sourceType != .missing && next[jointName] != nil
     }
 
     stateByJoint = Dictionary(uniqueKeysWithValues: next.map { name, joint in
       let previousMeasuredAt = stateByJoint[name]?.lastMeasuredTime ?? joint.timestamp
       let lastMeasuredAt: TimeInterval = {
         switch joint.sourceType {
-        case .predicted, .missing:
+        case .inferred, .predicted, .missing:
           return previousMeasuredAt
         default:
           return joint.timestamp
@@ -194,6 +227,8 @@ final class TemporalJointTracker {
   func hardReset() {
     stateByJoint.removeAll()
     filtersByJoint.removeAll()
+    hysteresisVisibilityByJoint.removeAll()
+    lockedOffsetsByJoint.removeAll()
     lastValidFrameTime = nil
     lastTimestamp = 0
   }
@@ -235,6 +270,7 @@ final class TemporalJointTracker {
     )
 
     let sourceType = sourceTypeForMeasurement(measurement, hasHistory: previous != nil)
+    hysteresisVisibilityByJoint[measurement.name] = sourceType != .missing
 
     let blendedTarget = blendMeasuredAndPredicted(
       measured: measurement.point,
@@ -315,7 +351,12 @@ final class TemporalJointTracker {
     )
   }
 
-  private func updateMissingJoint(name: PushlyJointName, now: TimeInterval, dt: TimeInterval) -> TrackedJoint? {
+  private func updateMissingJoint(
+    name: PushlyJointName,
+    fallbackPoint: CGPoint? = nil,
+    now: TimeInterval,
+    dt: TimeInterval
+  ) -> TrackedJoint? {
     guard let previous = stateByJoint[name] else {
       return nil
     }
@@ -353,7 +394,7 @@ final class TemporalJointTracker {
 
     return TrackedJoint(
       name: name,
-      rawPosition: previous.rawPosition,
+      rawPosition: fallbackPoint ?? previous.rawPosition,
       smoothedPosition: predicted,
       velocity: dampedVelocity,
       rawConfidence: 0,
@@ -374,6 +415,7 @@ final class TemporalJointTracker {
   ) -> TrackedJoint {
     filtersByJoint[name] = nil
     stateByJoint[name] = nil
+    hysteresisVisibilityByJoint[name] = false
     let clamped = clamp01(fallbackPoint)
     return TrackedJoint(
       name: name,
@@ -432,14 +474,32 @@ final class TemporalJointTracker {
       return .predicted
     }
 
+    let gateOpen = confidenceGateAllowsTracking(measurement)
+    guard gateOpen else {
+      return hasHistory ? .inferred : .missing
+    }
+
     let confidence = measurement.confidence
-    if confidence >= max(config.tracker.highConfidenceMin, 0.55) {
+    if confidence >= config.tracker.confidenceHysteresisEnter {
       return .measured
     }
-    if confidence >= max(config.tracker.lowConfidenceMin, 0.2) {
+    if confidence >= config.tracker.confidenceHysteresisExit {
       return .lowConfidenceMeasured
     }
     return hasHistory ? .inferred : .lowConfidenceMeasured
+  }
+
+  private func confidenceGateAllowsTracking(_ measurement: PoseJointMeasurement) -> Bool {
+    let wasVisible = hysteresisVisibilityByJoint[measurement.name] ?? false
+    let support = min(measurement.visibility, measurement.presence)
+    let evidence = measurement.inFrame ? min(measurement.confidence, support) : measurement.confidence * 0.5
+
+    if wasVisible {
+      return measurement.confidence >= config.tracker.confidenceHysteresisExit
+        || support >= config.tracker.confidenceHysteresisExit
+    }
+
+    return evidence >= config.tracker.confidenceHysteresisEnter
   }
 
   private func blendedRenderConfidence(
@@ -505,6 +565,9 @@ final class TemporalJointTracker {
   }
 
   private func applyKinematicInference(joints: inout [PushlyJointName: TrackedJoint], now: TimeInterval) {
+    for link in lowerBodyLinks {
+      inferLinkedJoint(link, joints: &joints, now: now)
+    }
     inferArmJoint(
       shoulder: .leftShoulder,
       elbow: .leftElbow,
@@ -559,6 +622,82 @@ final class TemporalJointTracker {
     wristJoint.sourceType = .inferred
     wristJoint.timestamp = now
     joints[wrist] = wristJoint
+  }
+
+  private func updateStableOffsets(from joints: [PushlyJointName: TrackedJoint], now: TimeInterval) {
+    for link in lowerBodyLinks {
+      guard let parent = joints[link.parent],
+            let child = joints[link.child],
+            isStableMeasuredJoint(parent),
+            isStableMeasuredJoint(child) else {
+        continue
+      }
+
+      lockedOffsetsByJoint[link.child] = KinematicOffsetState(
+        vector: CGVector(
+          dx: child.smoothedPosition.x - parent.smoothedPosition.x,
+          dy: child.smoothedPosition.y - parent.smoothedPosition.y
+        ),
+        timestamp: now,
+        confidence: min(parent.renderConfidence, child.renderConfidence)
+      )
+    }
+  }
+
+  private func inferLinkedJoint(
+    _ link: KinematicLink,
+    joints: inout [PushlyJointName: TrackedJoint],
+    now: TimeInterval
+  ) {
+    guard needsKinematicLock(for: joints[link.child]) else {
+      return
+    }
+    guard let parentJoint = joints[link.parent],
+          parentJoint.isRenderable,
+          parentJoint.renderConfidence >= config.tracker.kinematicParentConfidenceMin else {
+      return
+    }
+    guard let offset = lockedOffsetsByJoint[link.child],
+          now - offset.timestamp <= config.tracker.kinematicLowerBodyMaxAge else {
+      return
+    }
+
+    let estimated = clamp01(
+      CGPoint(
+        x: parentJoint.smoothedPosition.x + offset.vector.dx,
+        y: parentJoint.smoothedPosition.y + offset.vector.dy
+      )
+    )
+
+    let inferredConfidence = min(parentJoint.renderConfidence, offset.confidence) * link.confidenceMultiplier
+    joints[link.child] = TrackedJoint(
+      name: link.child,
+      rawPosition: estimated,
+      smoothedPosition: estimated,
+      velocity: .zero,
+      rawConfidence: 0,
+      renderConfidence: max(config.tracker.inferenceConfidenceFloor, inferredConfidence),
+      logicConfidence: 0,
+      visibility: min(parentJoint.visibility, inferredConfidence),
+      presence: min(parentJoint.presence, inferredConfidence),
+      inFrame: true,
+      sourceType: .inferred,
+      timestamp: now
+    )
+  }
+
+  private func isStableMeasuredJoint(_ joint: TrackedJoint) -> Bool {
+    (joint.sourceType == .measured || joint.sourceType == .lowConfidenceMeasured)
+      && joint.renderConfidence >= config.tracker.confidenceHysteresisEnter
+      && joint.inFrame
+  }
+
+  private func needsKinematicLock(for joint: TrackedJoint?) -> Bool {
+    guard let joint else { return true }
+    if joint.sourceType == .missing || joint.sourceType == .predicted || joint.sourceType == .inferred {
+      return true
+    }
+    return joint.renderConfidence < config.tracker.confidenceHysteresisExit || !joint.inFrame
   }
 
   private func vectorMagnitude(_ vector: CGVector) -> CGFloat {

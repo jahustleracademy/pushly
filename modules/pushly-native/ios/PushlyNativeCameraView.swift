@@ -684,8 +684,7 @@ final class PushlyNativeCameraView: ExpoView {
         pixelBufferSize: latestPixelBufferSize,
         videoGravity: cameraManager.previewLayer.videoGravity,
         orientation: latestOrientation,
-        isMirrored: latestMirrored,
-        canonicalAlreadyMirrored: true
+        isMirrored: latestMirrored
       )
     )
   }

@@ -54,6 +54,8 @@ struct PushlyPoseConfig {
     let measuredConfidenceMin: Float = 0.03
     let highConfidenceMin: Float = 0.44
     let lowConfidenceMin: Float = 0.2
+    let confidenceHysteresisExit: Float = 0.15
+    let confidenceHysteresisEnter: Float = 0.6
     let emaBaseAlpha: CGFloat = 0.24
     let emaHighConfidenceBoost: CGFloat = 0.24
     let velocityDamping: CGFloat = 0.84
@@ -63,6 +65,8 @@ struct PushlyPoseConfig {
     let hardExpiration: TimeInterval = 0.95
     let inferenceConfidenceFloor: Float = 0.08
     let kinematicArmExtensionRatio: CGFloat = 0.92
+    let kinematicLowerBodyMaxAge: TimeInterval = 0.55
+    let kinematicParentConfidenceMin: Float = 0.18
   }
 
   struct Quality {
