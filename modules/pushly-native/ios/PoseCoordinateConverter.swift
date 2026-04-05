@@ -137,7 +137,7 @@ enum PoseCoordinateConverter {
     projection: ProjectionContext
   ) -> CGPoint {
     var normalized = clampNormalizedPoint(point)
-    if projection.isMirrored && !projection.canonicalAlreadyMirrored {
+    if projection.isMirrored {
       normalized.x = 1 - normalized.x
     }
 

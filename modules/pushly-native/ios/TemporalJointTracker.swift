@@ -468,45 +468,39 @@ final class TemporalJointTracker {
     var minCutoff: CGFloat
     var beta: CGFloat
     let dCutoff: CGFloat = 1.7
-    var predictionLead: CGFloat
 
     switch joint {
     case .nose, .head, .leftShoulder, .rightShoulder, .leftHip, .rightHip:
-      minCutoff = 0.22
-      beta = 2.2
-      predictionLead = 0.012
+      minCutoff = 0.05
+      beta = 4.2
     case .leftElbow, .rightElbow, .leftKnee, .rightKnee:
-      minCutoff = 0.24
-      beta = 2.6
-      predictionLead = 0.014
+      minCutoff = 0.1
+      beta = 4.6
     case .leftWrist, .rightWrist, .leftHand, .rightHand, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot:
-      minCutoff = 0.26
-      beta = 3.1
-      predictionLead = 0.016
+      minCutoff = 0.1
+      beta = 5.0
     }
 
     if lowLightDetected {
-      minCutoff *= 0.92
-      beta *= 0.9
-      predictionLead *= 0.88
+      minCutoff *= 0.95
+      beta *= 0.96
     }
 
     if confidence < 0.35 {
-      minCutoff *= 0.82
-      beta *= 0.78
+      minCutoff *= 0.9
+      beta *= 0.92
     }
 
     if sourceType == .inferred || sourceType == .predicted {
-      minCutoff *= 0.78
-      beta *= 0.7
-      predictionLead *= 0.75
+      minCutoff *= 0.9
+      beta *= 0.9
     }
 
     return OneEuroParameters(
-      minCutoff: max(0.12, minCutoff),
-      beta: max(0.2, beta),
+      minCutoff: max(0.05, minCutoff),
+      beta: max(4.0, beta),
       dCutoff: dCutoff,
-      predictionLeadSeconds: max(0.004, min(0.022, predictionLead))
+      predictionLeadSeconds: 0.0
     )
   }
 

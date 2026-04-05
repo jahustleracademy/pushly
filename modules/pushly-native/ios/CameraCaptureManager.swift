@@ -139,10 +139,11 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
     }
 
     if let connection = output.connection(with: .video) {
-      configureVideoConnection(connection, isFrontCamera: cameraPosition == .front)
+      // Keep capture output unmirrored so pose backends receive raw camera coordinates.
+      configureVideoConnection(connection, isFrontCamera: cameraPosition == .front, shouldMirror: false)
     }
     if let previewConnection = previewLayer.connection {
-      configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front)
+      configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front, shouldMirror: cameraPosition == .front)
     }
 
     session.commitConfiguration()
@@ -320,13 +321,17 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
     config.camera.maxCaptureFPS
   }
 
-  private func configureVideoConnection(_ connection: AVCaptureConnection, isFrontCamera: Bool) {
+  private func configureVideoConnection(
+    _ connection: AVCaptureConnection,
+    isFrontCamera: Bool,
+    shouldMirror: Bool
+  ) {
     if connection.isVideoOrientationSupported {
       connection.videoOrientation = .portrait
     }
     if connection.isVideoMirroringSupported {
       connection.automaticallyAdjustsVideoMirroring = false
-      connection.isVideoMirrored = isFrontCamera
+      connection.isVideoMirrored = isFrontCamera && shouldMirror
     }
   }
 

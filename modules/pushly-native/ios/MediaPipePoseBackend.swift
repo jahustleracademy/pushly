@@ -14,10 +14,6 @@ final class MediaPipePoseBackend: PoseBackend {
     var lockedLeftHip: CGPoint = .zero
     var lockedRightHip: CGPoint = .zero
   }
-  private struct MediaPipeInputTransform {
-    let orientation: UIImage.Orientation
-    let appliedMirroring: Bool
-  }
 
   private let config: PushlyPoseConfig
   private let diagnostics: PoseDiagnostics?
@@ -109,15 +105,14 @@ final class MediaPipePoseBackend: PoseBackend {
       )
     }
 
-    let inputTransform = mediaPipeInputTransform(sampleBuffer: frame.sampleBuffer, isFrontCamera: frame.mirrored)
-    let mpImage = try MPImage(sampleBuffer: frame.sampleBuffer, orientation: inputTransform.orientation)
+    let inputOrientation = mediaPipeInputOrientation(sampleBuffer: frame.sampleBuffer)
+    let mpImage = try MPImage(sampleBuffer: frame.sampleBuffer, orientation: inputOrientation)
     let timestampMs = max(0, Int(frame.timestamp * 1000.0))
 
     let poseResult = try poseLandmarker.detect(videoFrame: mpImage, timestampInMilliseconds: timestampMs)
     let poseLandmarks = poseResult.landmarks.first ?? []
 
-    let canonicalMirroringNeeded = frame.mirrored && !inputTransform.appliedMirroring
-    var mapped = mapPoseLandmarks(poseLandmarks, mirrored: canonicalMirroringNeeded, timestamp: frame.timestamp)
+    var mapped = mapPoseLandmarks(poseLandmarks, mirrored: false, timestamp: frame.timestamp)
     if let roiHint = frame.roiHint,
        frame.reacquireSource == .previousTrack || frame.reacquireSource == .face || frame.reacquireSource == .upperBody {
       mapped = applyROIGating(to: mapped, roi: roiHint)
@@ -132,7 +127,7 @@ final class MediaPipePoseBackend: PoseBackend {
         handRefinedJointCount = applyHandRefinement(
           handResult: handResult,
           joints: &mapped,
-          mirrored: canonicalMirroringNeeded,
+          mirrored: false,
           timestamp: frame.timestamp
         )
       }
@@ -412,15 +407,34 @@ final class MediaPipePoseBackend: PoseBackend {
   ) -> [PushlyJointName: PoseJointMeasurement] {
     var output = joints
 
-    guard let leftShoulder = output[.leftShoulder], leftShoulder.confidence > 0.45,
-          let rightShoulder = output[.rightShoulder], rightShoulder.confidence > 0.45 else {
+    guard let leftShoulder = output[.leftShoulder],
+          let rightShoulder = output[.rightShoulder] else {
       tooCloseLock.isActive = false
       return output
     }
 
-    let leftHipWeak = isHipWeak(output[.leftHip])
-    let rightHipWeak = isHipWeak(output[.rightHip])
+    let minimumShoulderConfidence: Float = 0.12
+    guard leftShoulder.confidence >= minimumShoulderConfidence,
+          rightShoulder.confidence >= minimumShoulderConfidence else {
+      tooCloseLock.isActive = false
+      return output
+    }
+
+    let floorState = isLikelyFloorState(joints: output, leftShoulder: leftShoulder, rightShoulder: rightShoulder)
+    let leftHipWeak = isHipWeak(output[.leftHip], floorState: floorState)
+    let rightHipWeak = isHipWeak(output[.rightHip], floorState: floorState)
     let tooCloseDetected = leftHipWeak || rightHipWeak
+
+    if floorState {
+      tooCloseLock.isActive = false
+      if leftHipWeak {
+        output[.leftHip] = missingJointMeasurement(name: .leftHip, fallbackPoint: leftShoulder.point, timestamp: timestamp)
+      }
+      if rightHipWeak {
+        output[.rightHip] = missingJointMeasurement(name: .rightHip, fallbackPoint: rightShoulder.point, timestamp: timestamp)
+      }
+      return output
+    }
 
     if tooCloseDetected {
       let left = leftShoulder.point
@@ -497,21 +511,64 @@ final class MediaPipePoseBackend: PoseBackend {
     return output
   }
 
-  private func isHipWeak(_ hip: PoseJointMeasurement?) -> Bool {
+  private func isHipWeak(_ hip: PoseJointMeasurement?, floorState: Bool) -> Bool {
     guard let hip else { return true }
-    let outOfBounds = !hip.inFrame || hip.point.y > 1.0
-    return hip.confidence < 0.3 || outOfBounds
+    let outOfBounds = !hip.inFrame || hip.point.y > 1.0 || hip.point.x < 0.0 || hip.point.x > 1.0
+    let confidenceThreshold: Float = floorState ? 0.08 : 0.3
+    let visibilityThreshold: Float = floorState ? 0.06 : 0.22
+    let presenceThreshold: Float = floorState ? 0.06 : 0.2
+    return hip.confidence < confidenceThreshold
+      || hip.visibility < visibilityThreshold
+      || hip.presence < presenceThreshold
+      || outOfBounds
   }
 
-  private func mediaPipeInputTransform(
-    sampleBuffer: CMSampleBuffer,
-    isFrontCamera: Bool
-  ) -> MediaPipeInputTransform {
+  private func isLikelyFloorState(
+    joints: [PushlyJointName: PoseJointMeasurement],
+    leftShoulder: PoseJointMeasurement,
+    rightShoulder: PoseJointMeasurement
+  ) -> Bool {
+    guard let nose = joints[.nose], nose.confidence >= 0.08 else {
+      return false
+    }
+
+    let left = leftShoulder.point
+    let right = rightShoulder.point
+    let shoulderMid = CGPoint(x: (left.x + right.x) * 0.5, y: (left.y + right.y) * 0.5)
+    let shoulderVector = CGVector(dx: right.x - left.x, dy: right.y - left.y)
+    let shoulderSpan = max(0.0001, hypot(shoulderVector.dx, shoulderVector.dy))
+    let toNose = CGVector(dx: nose.point.x - shoulderMid.x, dy: nose.point.y - shoulderMid.y)
+    let verticalDelta = nose.point.y - shoulderMid.y
+    let normalizedVerticalDelta = verticalDelta / shoulderSpan
+    let noseAtShoulderHeight = abs(normalizedVerticalDelta) <= 0.42
+    let shouldersAboveNose = shoulderMid.y >= nose.point.y - shoulderSpan * 0.15
+    let nearHorizontalNoseVector = abs(toNose.dy) <= shoulderSpan * 0.42
+    return noseAtShoulderHeight || shouldersAboveNose || nearHorizontalNoseVector
+  }
+
+  private func missingJointMeasurement(
+    name: PushlyJointName,
+    fallbackPoint: CGPoint,
+    timestamp: TimeInterval
+  ) -> PoseJointMeasurement {
+    PoseJointMeasurement(
+      name: name,
+      point: PoseCoordinateConverter.clampNormalizedPoint(fallbackPoint),
+      confidence: 0,
+      visibility: 0,
+      presence: 0,
+      sourceType: .missing,
+      inFrame: false,
+      backend: kind,
+      measuredAt: timestamp
+    )
+  }
+
+  private func mediaPipeInputOrientation(
+    sampleBuffer: CMSampleBuffer
+  ) -> UIImage.Orientation {
     guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-      return MediaPipeInputTransform(
-        orientation: isFrontCamera ? .upMirrored : .up,
-        appliedMirroring: isFrontCamera
-      )
+      return .up
     }
 
     let width = CVPixelBufferGetWidth(pixelBuffer)
@@ -519,17 +576,11 @@ final class MediaPipePoseBackend: PoseBackend {
     let isPortraitBuffer = height >= width
 
     if isPortraitBuffer {
-      return MediaPipeInputTransform(
-        orientation: isFrontCamera ? .upMirrored : .up,
-        appliedMirroring: isFrontCamera
-      )
+      return .up
     }
 
     // Sensor-native landscape buffers still need explicit rotation for portrait UI pipelines.
-    return MediaPipeInputTransform(
-      orientation: isFrontCamera ? .leftMirrored : .right,
-      appliedMirroring: isFrontCamera
-    )
+    return .right
   }
 
   private func emptyResult(
