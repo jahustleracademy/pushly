@@ -10,29 +10,33 @@ type Props = TextProps & {
 
 export function Text({ variant = 'body', style, ...props }: Props) {
   const { theme } = useTheme();
+  const variantStyle = variantStyles(theme);
 
-  return <RNText {...props} style={[styles[variant], { color: theme.colors.text }, style]} />;
+  return <RNText {...props} style={[variantStyle[variant], { color: theme.colors.text }, style]} />;
 }
 
-const styles = StyleSheet.create({
-  title: {
-    fontSize: 30,
-    lineHeight: 36,
-    fontFamily: 'Sora_700Bold'
-  },
-  heading: {
-    fontSize: 22,
-    lineHeight: 28,
-    fontFamily: 'Sora_600SemiBold'
-  },
-  body: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontFamily: 'Sora_400Regular'
-  },
-  caption: {
-    fontSize: 13,
-    lineHeight: 18,
-    fontFamily: 'Sora_500Medium'
-  }
-});
+const variantStyles = (theme: ReturnType<typeof useTheme>['theme']) =>
+  StyleSheet.create({
+    title: {
+      fontSize: 32,
+      lineHeight: 36,
+      fontFamily: theme.typography.heavy,
+      letterSpacing: -0.8
+    },
+    heading: {
+      fontSize: 22,
+      lineHeight: 27,
+      fontFamily: theme.typography.bold,
+      letterSpacing: -0.4
+    },
+    body: {
+      fontSize: 16,
+      lineHeight: 23,
+      fontFamily: theme.typography.regular
+    },
+    caption: {
+      fontSize: 13,
+      lineHeight: 17,
+      fontFamily: theme.typography.medium
+    }
+  });

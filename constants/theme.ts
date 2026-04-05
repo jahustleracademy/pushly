@@ -1,15 +1,22 @@
 export type PushlyTheme = {
   colors: {
     background: string;
+    backgroundDeep: string;
     surface: string;
     surfaceElevated: string;
+    surfaceGlass: string;
     border: string;
+    borderStrong: string;
     text: string;
     textMuted: string;
     accent: string;
+    accentSoft: string;
     accentStrong: string;
+    accentDeep: string;
     success: string;
     warning: string;
+    danger: string;
+    dangerSoft: string;
   };
   spacing: {
     xs: number;
@@ -29,21 +36,29 @@ export type PushlyTheme = {
     medium: string;
     semibold: string;
     bold: string;
+    heavy: string;
   };
 };
 
 export const pushlyTheme: PushlyTheme = {
   colors: {
-    background: '#05070B',
-    surface: '#0E1219',
-    surfaceElevated: '#151C27',
-    border: '#1F2A3A',
-    text: '#F4F7FF',
-    textMuted: '#8C98AD',
-    accent: '#3EE7A8',
-    accentStrong: '#00C887',
+    background: '#070807',
+    backgroundDeep: '#030402',
+    surface: '#101210',
+    surfaceElevated: '#171A17',
+    surfaceGlass: 'rgba(255,255,255,0.06)',
+    border: 'rgba(255,255,255,0.1)',
+    borderStrong: 'rgba(255,255,255,0.2)',
+    text: '#F7F8F2',
+    textMuted: '#A8AD9F',
+    accent: '#BAFA20',
+    accentSoft: '#AEDD46',
+    accentStrong: '#87AD35',
+    accentDeep: '#617B24',
     success: '#4ADE80',
-    warning: '#F59E0B'
+    warning: '#FFB020',
+    danger: '#FF7A1A',
+    dangerSoft: '#FFB36A'
   },
   spacing: {
     xs: 6,
@@ -59,9 +74,10 @@ export const pushlyTheme: PushlyTheme = {
     xl: 24
   },
   typography: {
-    regular: 'Sora_400Regular',
-    medium: 'Sora_500Medium',
-    semibold: 'Sora_600SemiBold',
-    bold: 'Sora_700Bold'
+    regular: 'Outfit_400Regular',
+    medium: 'Outfit_500Medium',
+    semibold: 'Outfit_600SemiBold',
+    bold: 'Outfit_700Bold',
+    heavy: 'Outfit_800ExtraBold'
   }
 };

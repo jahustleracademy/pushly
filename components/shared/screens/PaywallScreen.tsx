@@ -4,9 +4,9 @@ import { PlaceholderTemplate } from './PlaceholderTemplate';
 export function PaywallScreen() {
   return (
     <PlaceholderTemplate
-      title="Paywall"
-      subtitle="Subscription funnel powered by RevenueCat foundation."
-      todos={['offerings fetch', 'package selection UI', 'restore purchases and entitlement sync']}
+      title="Zugang"
+      subtitle="Pushly verkauft keine Motivation, sondern echte Reibung zwischen dir und deinen Trigger-Apps."
+      todos={['RevenueCat-Produkte', 'Restore-Kauf', 'Live-Angebote statt Fallback']}
     />
   );
 }

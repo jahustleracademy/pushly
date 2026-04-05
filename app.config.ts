@@ -8,18 +8,48 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
   version: '0.1.0',
   orientation: 'portrait',
   userInterfaceStyle: 'dark',
+  icon: './assets/images/icon.png',
+  splash: {
+    image: './assets/images/splash.jpg',
+    resizeMode: 'contain',
+    backgroundColor: '#060706'
+  },
   ios: {
     supportsTablet: false,
-    bundleIdentifier: 'com.pushly.app',
+    bundleIdentifier: 'com.artur.pushly',
+    icon: './assets/images/icon.png',
+    entitlements: {
+      'com.apple.security.application-groups': ['group.com.pushly.shared'],
+      'com.apple.developer.family-controls': true
+    },
     infoPlist: {
       NSCameraUsageDescription:
-        'Pushly uses the camera to power real-time exercise tracking and pose detection.'
+        'Pushly uses the camera to power real-time exercise tracking and pose detection.',
+      NSPhotoLibraryAddUsageDescription:
+        'Pushly may save premium onboarding and workout visuals to your library when you choose to export them.'
     }
   },
-  android: {
-    package: 'com.pushly.app'
+  web: {
+    favicon: './assets/images/favicon.png'
   },
-  plugins: ['expo-router'],
+  plugins: [
+    'expo-router',
+    [
+      'expo-build-properties',
+      {
+        ios: {
+          deploymentTarget: '16.0'
+        }
+      }
+    ],
+    [
+      'expo-targets',
+      {
+        debug: false,
+        targetsRoot: './targets'
+      }
+    ]
+  ],
   experiments: {
     typedRoutes: true
   },

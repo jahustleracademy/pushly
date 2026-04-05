@@ -4,9 +4,9 @@ import { PlaceholderTemplate } from './PlaceholderTemplate';
 export function ProgressScreen() {
   return (
     <PlaceholderTemplate
-      title="Progress"
-      subtitle="Training history, streaks, and metrics surfaces."
-      todos={['daily stats schema', 'session summaries', 'chart widgets and trend insights']}
+      title="Verlauf"
+      subtitle="Hier landen später Unlocks, Fokus-Streaks und alle durch Pushly zurückgewonnenen Minuten."
+      todos={['Unlock-Historie', 'gesparte Scroll-Zeit', 'Streaks und Fokusmuster']}
     />
   );
 }

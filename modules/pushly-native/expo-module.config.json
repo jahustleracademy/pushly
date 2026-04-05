@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "web"],
+  "apple": {
+    "modules": ["PushlyNativeModule"]
+  },
+  "web": {
+    "modules": ["PushlyNativeModule"]
+  }
+}

@@ -1,4 +1,5 @@
 export const routes = {
+  onboarding: '/(onboarding)',
   home: '/(tabs)',
   workout: '/workout',
   session: '/session',

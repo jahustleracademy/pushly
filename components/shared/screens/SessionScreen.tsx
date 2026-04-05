@@ -4,15 +4,15 @@ import { PlaceholderTemplate } from './PlaceholderTemplate';
 export function SessionScreen() {
   return (
     <PlaceholderTemplate
-      title="Session"
-      subtitle="Live training runtime where camera, pose, and counters will run in real time."
+      title="Detektion"
+      subtitle="Hier wird spaeter die echte Liegestuetz-Erkennung, Kamera-Pruefung und Unlock-Session laufen."
       todos={[
-        'camera preview with frame lifecycle handling',
-        'pose model inference loop',
-        'push-up and squat rep state machine',
-        'session timeline and persistence'
+        'Kamera-Preview',
+        'Liegestuetz-Erkennung',
+        'Unlock-Session State',
+        'Session-Verlauf'
       ]}
-      links={[{ href: '/progress', label: 'See Progress' }]}
+      links={[{ href: '/progress', label: 'Zum Verlauf' }]}
     />
   );
 }

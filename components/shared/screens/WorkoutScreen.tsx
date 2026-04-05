@@ -4,10 +4,10 @@ import { PlaceholderTemplate } from './PlaceholderTemplate';
 export function WorkoutScreen() {
   return (
     <PlaceholderTemplate
-      title="Workout"
-      subtitle="Program templates, exercise selection, and future AI coaching entry point."
-      todos={['exercise plan model', 'adaptive workout generator', 'warm-up and cooldown flows']}
-      links={[{ href: '/session', label: 'Start Session (Placeholder)' }]}
+      title="Schutzmodi"
+      subtitle="Hier koennen spaeter unterschiedliche Sperr- und Unlock-Profile fuer Arbeit, Lernen und Freizeit entstehen."
+      todos={['Arbeitsmodus', 'Abendmodus', 'strenger Fokusmodus']}
+      links={[{ href: '/session', label: 'Detektion ansehen' }]}
     />
   );
 }
