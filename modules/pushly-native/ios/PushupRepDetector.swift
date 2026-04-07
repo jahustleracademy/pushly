@@ -14,6 +14,21 @@ final class PushupRepDetector {
   private var previousSmoothedElbowAngle: CGFloat = 170
   private var smoothedShoulderY: CGFloat = 0
   private var previousShoulderY: CGFloat = 0
+  private var smoothedTorsoY: CGFloat = 0
+  private var previousTorsoY: CGFloat = 0
+  private var descendingFrames = 0
+  private var bottomFrames = 0
+  private var ascendingFrames = 0
+  private var logicBlockedFrames = 0
+  private var repStartElbowAngle: CGFloat = 170
+  private var repMinElbowAngle: CGFloat = 170
+  private var repStartShoulderY: CGFloat = 0
+  private var repMaxShoulderY: CGFloat = 0
+  private var repStartTorsoY: CGFloat = 0
+  private var repMaxTorsoY: CGFloat = 0
+  private var floorBaselineTorsoY: CGFloat = 0
+  private var hasFloorBaselineTorsoY = false
+  private var bottomOcclusionFrames = 0
 
   init(config: PushlyPoseConfig) {
     self.config = config
@@ -28,6 +43,21 @@ final class PushupRepDetector {
     previousSmoothedElbowAngle = 170
     smoothedShoulderY = 0
     previousShoulderY = 0
+    smoothedTorsoY = 0
+    previousTorsoY = 0
+    descendingFrames = 0
+    bottomFrames = 0
+    ascendingFrames = 0
+    logicBlockedFrames = 0
+    repStartElbowAngle = 170
+    repMinElbowAngle = 170
+    repStartShoulderY = 0
+    repMaxShoulderY = 0
+    repStartTorsoY = 0
+    repMaxTorsoY = 0
+    floorBaselineTorsoY = 0
+    hasFloorBaselineTorsoY = false
+    bottomOcclusionFrames = 0
   }
 
   func update(
@@ -36,16 +66,24 @@ final class PushupRepDetector {
     repTarget: Int
   ) -> RepDetectionOutput {
     let signal = computeSignal(joints: joints)
+    let floorState = quality.pushupFloorModeActive || signal.pushupFloorState
+    let minMeasuredEvidence = floorState ? config.rep.floorMinMeasuredEvidence : config.rep.minMeasuredEvidence
+    let minTorsoStability = floorState ? config.rep.floorMinTorsoStability : config.rep.minTorsoStability
+    let minShoulderHipLineQuality = floorState ? config.rep.floorMinShoulderHipLineQuality : config.rep.minShoulderHipLineQuality
+    let dominantEvidence = max(signal.measuredEvidence, signal.structuralEvidence, signal.upperBodyEvidence)
 
     guard signal.hasRenderableBody else {
       state = .lostTracking
       plankFrames = 0
       bottomReached = false
-      return RepDetectionOutput(state: state, repCount: repCount, formScore: signal.formScore, blockedReasons: ["body_not_found"])
+      bottomOcclusionFrames = 0
+      return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: ["body_not_found"])
     }
 
     previousSmoothedElbowAngle = smoothedElbowAngle
-    smoothedElbowAngle = smoothedElbowAngle * (1 - config.rep.elbowSmoothAlpha) + signal.elbowAngle * config.rep.elbowSmoothAlpha
+    if signal.hasElbowMeasurement {
+      smoothedElbowAngle = smoothedElbowAngle * (1 - config.rep.elbowSmoothAlpha) + signal.elbowAngle * config.rep.elbowSmoothAlpha
+    }
     if smoothedShoulderY == 0 {
       smoothedShoulderY = signal.shoulderY
       previousShoulderY = signal.shoulderY
@@ -53,73 +91,217 @@ final class PushupRepDetector {
       previousShoulderY = smoothedShoulderY
       smoothedShoulderY = smoothedShoulderY * (1 - config.rep.shoulderSmoothAlpha) + signal.shoulderY * config.rep.shoulderSmoothAlpha
     }
+    if smoothedTorsoY == 0 {
+      smoothedTorsoY = signal.torsoY
+      previousTorsoY = signal.torsoY
+    } else {
+      previousTorsoY = smoothedTorsoY
+      smoothedTorsoY = smoothedTorsoY * (1 - config.rep.torsoSmoothAlpha) + signal.torsoY * config.rep.torsoSmoothAlpha
+    }
+    if signal.hasElbowMeasurement {
+      bottomOcclusionFrames = 0
+    } else if bottomReached {
+      bottomOcclusionFrames += 1
+    } else {
+      bottomOcclusionFrames = 0
+    }
+
     let shoulderVelocity = smoothedShoulderY - previousShoulderY
     let elbowVelocity = smoothedElbowAngle - previousSmoothedElbowAngle
+    let torsoVelocity = smoothedTorsoY - previousTorsoY
+    let elbowVelocityMinForDescent = floorState ? config.rep.floorElbowVelocityMinForDescent : config.rep.elbowVelocityMinForDescent
+    let elbowVelocityMinForAscent = floorState ? config.rep.floorElbowVelocityMinForAscent : config.rep.elbowVelocityMinForAscent
 
     var blockedReasons: [String] = []
     if quality.logicQuality < config.rep.minLogicQualityToProgress {
       blockedReasons.append("logic_quality_low")
     }
-    if max(signal.measuredEvidence, signal.structuralEvidence) < config.rep.minMeasuredEvidence {
+    if dominantEvidence < minMeasuredEvidence {
       blockedReasons.append("measured_evidence_low")
     }
-    if signal.torsoStability < config.rep.minTorsoStability {
+    if signal.torsoStability < minTorsoStability {
       blockedReasons.append("torso_unstable")
     }
-    let floorState = signal.pushupFloorState
+    if signal.shoulderHipLineQuality < minShoulderHipLineQuality {
+      blockedReasons.append("shoulder_hip_line_weak")
+    }
+    if signal.renderableArmCount >= 2 && signal.bilateralElbowAngleDelta > config.rep.bilateralElbowMaxAngleDelta {
+      blockedReasons.append("arm_asymmetry")
+    }
     if floorState && blockedReasons.contains("measured_evidence_low") {
       blockedReasons.removeAll { $0 == "measured_evidence_low" }
     }
     if floorState && blockedReasons.contains("torso_unstable") && signal.torsoStability >= 0.26 {
       blockedReasons.removeAll { $0 == "torso_unstable" }
     }
+    if floorState && blockedReasons.contains("shoulder_hip_line_weak") && signal.shoulderHipLineQuality >= 0.32 {
+      blockedReasons.removeAll { $0 == "shoulder_hip_line_weak" }
+    }
     let logicReady = blockedReasons.isEmpty
+    if logicReady {
+      logicBlockedFrames = 0
+    } else {
+      logicBlockedFrames += 1
+    }
+    let canProgress = logicReady || logicBlockedFrames <= config.rep.logicGateGraceFrames
 
-    if !logicReady {
+    if !canProgress {
       if quality.renderQuality >= config.quality.renderMin {
         state = .trackingAssisted
       } else {
         state = .lostTracking
       }
-      return RepDetectionOutput(state: state, repCount: repCount, formScore: signal.formScore, blockedReasons: blockedReasons)
+      descendingFrames = 0
+      bottomFrames = 0
+      ascendingFrames = 0
+      bottomOcclusionFrames = 0
+      return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: blockedReasons)
     }
 
-    if smoothedElbowAngle > config.rep.plankAngleMin, signal.torsoStability > config.rep.minTorsoStability {
+    if signal.hasElbowMeasurement, smoothedElbowAngle > config.rep.plankAngleMin, signal.torsoStability > minTorsoStability {
       plankFrames += 1
+      descendingFrames = max(0, descendingFrames - 1)
+      bottomFrames = max(0, bottomFrames - 1)
+      ascendingFrames = max(0, ascendingFrames - 1)
+      if !bottomReached {
+        repStartElbowAngle = smoothedElbowAngle
+        repMinElbowAngle = smoothedElbowAngle
+        repStartShoulderY = smoothedShoulderY
+        repMaxShoulderY = smoothedShoulderY
+        repStartTorsoY = smoothedTorsoY
+        repMaxTorsoY = smoothedTorsoY
+      }
+      if floorState {
+        if hasFloorBaselineTorsoY {
+          floorBaselineTorsoY = floorBaselineTorsoY * 0.82 + smoothedTorsoY * 0.18
+        } else {
+          floorBaselineTorsoY = smoothedTorsoY
+          hasFloorBaselineTorsoY = true
+        }
+      }
       if plankFrames >= config.rep.plankLockFrames {
         state = .plankLocked
       } else {
         state = .bodyFound
       }
-    } else if state == .plankLocked || state == .descending || bottomReached {
+    } else if state == .plankLocked || state == .descending || state == .ascending || bottomReached {
       let descendingByShoulder = shoulderVelocity > config.rep.shoulderVelocityMinForDescent
       let ascendingByShoulder = shoulderVelocity < -config.rep.shoulderVelocityMinForAscent
-      let descendingByElbow = elbowVelocity < (floorState ? -0.3 : -0.42)
-      let ascendingByElbow = elbowVelocity > (floorState ? 0.3 : 0.42)
-      let descendingSignal = descendingByShoulder || descendingByElbow
-      let ascendingSignal = ascendingByShoulder || ascendingByElbow
+      let descendingByElbow = signal.hasElbowMeasurement && elbowVelocity < -elbowVelocityMinForDescent
+      let ascendingByElbow = signal.hasElbowMeasurement && elbowVelocity > elbowVelocityMinForAscent
+      let descendingByTorso = torsoVelocity > config.rep.torsoVelocityMinForDescent
+      let ascendingByTorso = torsoVelocity < -config.rep.torsoVelocityMinForAscent
+      // Primary progression depends on torso/shoulder motion for frontal stability.
+      let descendingSignal = descendingByTorso || descendingByShoulder
+      let ascendingSignal = ascendingByTorso || ascendingByShoulder
+      let torsoTopReference = hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY
+      let torsoDownTravel = max(0, repMaxTorsoY - torsoTopReference)
+      let torsoRecoveryToTop = max(0, repMaxTorsoY - smoothedTorsoY)
+      let shoulderDownTravel = max(0, repMaxShoulderY - repStartShoulderY)
+      let shoulderRecoveryToTop = max(0, repMaxShoulderY - smoothedShoulderY)
+      let elbowAtDescent = signal.hasElbowMeasurement && smoothedElbowAngle < config.rep.descendAngleMax
+      let elbowAtBottom = signal.hasElbowMeasurement && smoothedElbowAngle < config.rep.bottomAngleMax
+      let elbowAtAscent = signal.hasElbowMeasurement && smoothedElbowAngle > config.rep.ascendAngleMin
+      let allowBottomOcclusion = bottomReached && bottomOcclusionFrames <= config.rep.bottomOcclusionGraceFrames
+      let elbowSecondaryDescentConfirm = elbowAtDescent || descendingByElbow
+      let elbowSecondaryAscendConfirm = elbowAtAscent || ascendingByElbow || allowBottomOcclusion
 
-      if smoothedElbowAngle < config.rep.descendAngleMax && descendingSignal {
-        state = .descending
+      if descendingSignal && elbowSecondaryDescentConfirm {
+        if descendingFrames == 0 {
+          repStartElbowAngle = max(previousSmoothedElbowAngle, smoothedElbowAngle)
+          repMinElbowAngle = smoothedElbowAngle
+          repStartShoulderY = smoothedShoulderY
+          repMaxShoulderY = smoothedShoulderY
+          repStartTorsoY = smoothedTorsoY
+          repMaxTorsoY = smoothedTorsoY
+        }
+        descendingFrames += 1
+        if signal.hasElbowMeasurement {
+          repMinElbowAngle = min(repMinElbowAngle, smoothedElbowAngle)
+        }
+        repMaxShoulderY = max(repMaxShoulderY, smoothedShoulderY)
+        repMaxTorsoY = max(repMaxTorsoY, smoothedTorsoY)
+        if descendingFrames >= config.rep.descentConfirmFrames {
+          state = .descending
+        }
+      } else {
+        descendingFrames = max(0, descendingFrames - 1)
       }
-      if smoothedElbowAngle < config.rep.bottomAngleMax && descendingSignal {
-        state = .bottomReached
-        bottomReached = true
+
+      if elbowAtBottom || allowBottomOcclusion {
+        if descendingSignal || state == .descending || bottomReached {
+          bottomFrames += 1
+        }
+        if signal.hasElbowMeasurement {
+          repMinElbowAngle = min(repMinElbowAngle, smoothedElbowAngle)
+        }
+        repMaxShoulderY = max(repMaxShoulderY, smoothedShoulderY)
+        repMaxTorsoY = max(repMaxTorsoY, smoothedTorsoY)
+        if bottomFrames >= config.rep.bottomConfirmFrames &&
+          torsoDownTravel >= config.rep.minTorsoDownTravelForBottom &&
+          shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom {
+          state = .bottomReached
+          bottomReached = true
+        }
+      } else if !bottomReached {
+        bottomFrames = max(0, bottomFrames - 1)
       }
-      if bottomReached && smoothedElbowAngle > config.rep.ascendAngleMin && ascendingSignal {
-        state = .ascending
+
+      if bottomReached && elbowSecondaryAscendConfirm && ascendingSignal {
+        ascendingFrames += 1
+        if ascendingFrames >= config.rep.ascendingConfirmFrames {
+          state = .ascending
+        }
+      } else if bottomReached {
+        ascendingFrames = max(0, ascendingFrames - 1)
       }
-      if bottomReached && smoothedElbowAngle > config.rep.repCompleteAngleMin &&
+
+      let repTravel = max(0, repStartElbowAngle - repMinElbowAngle)
+      let elbowComplete = signal.hasElbowMeasurement && smoothedElbowAngle > config.rep.repCompleteAngleMin
+      if bottomReached && elbowComplete &&
+        ascendingFrames >= config.rep.ascendingConfirmFrames &&
+        repMinElbowAngle < config.rep.bottomAngleMax &&
+        repTravel >= config.rep.minRepAngleTravel &&
+        torsoDownTravel >= config.rep.minTorsoCycleTravel &&
+        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel &&
+        shoulderDownTravel >= config.rep.minShoulderCycleTravel &&
+        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel &&
+        smoothedTorsoY <= torsoTopReference + config.rep.maxTorsoTopRecoveryOffset &&
         quality.logicQuality >= config.rep.minLogicQualityToCount &&
-        max(signal.measuredEvidence, signal.structuralEvidence) >= config.rep.minMeasuredEvidence &&
-        signal.torsoStability >= config.rep.minTorsoStability {
+        dominantEvidence >= minMeasuredEvidence &&
+        signal.torsoStability >= minTorsoStability &&
+        signal.shoulderHipLineQuality >= minShoulderHipLineQuality {
         repCount += 1
         state = .repCounted
         bottomReached = false
         plankFrames = config.rep.plankLockFrames
+        descendingFrames = 0
+        bottomFrames = 0
+        ascendingFrames = 0
+        repStartElbowAngle = smoothedElbowAngle
+        repMinElbowAngle = smoothedElbowAngle
+        repStartShoulderY = smoothedShoulderY
+        repMaxShoulderY = smoothedShoulderY
+        repStartTorsoY = smoothedTorsoY
+        repMaxTorsoY = smoothedTorsoY
+        bottomOcclusionFrames = 0
+        if floorState {
+          if hasFloorBaselineTorsoY {
+            floorBaselineTorsoY = floorBaselineTorsoY * 0.8 + smoothedTorsoY * 0.2
+          } else {
+            floorBaselineTorsoY = smoothedTorsoY
+            hasFloorBaselineTorsoY = true
+          }
+        }
       }
     } else {
       plankFrames = max(0, plankFrames - 1)
+      descendingFrames = max(0, descendingFrames - 1)
+      bottomFrames = max(0, bottomFrames - 1)
+      ascendingFrames = max(0, ascendingFrames - 1)
+      if !bottomReached {
+        bottomOcclusionFrames = 0
+      }
       state = .bodyFound
     }
 
@@ -127,28 +309,69 @@ final class PushupRepDetector {
       state = .repCounted
     }
 
-    return RepDetectionOutput(state: state, repCount: repCount, formScore: signal.formScore, blockedReasons: blockedReasons)
+    return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: blockedReasons)
   }
 
   private func computeSignal(joints: [PushlyJointName: TrackedJoint]) -> (
     elbowAngle: CGFloat,
+    hasElbowMeasurement: Bool,
+    renderableArmCount: Int,
+    bilateralElbowAngleDelta: CGFloat,
     shoulderY: CGFloat,
+    torsoY: CGFloat,
     torsoStability: Double,
+    shoulderHipLineQuality: Double,
     measuredEvidence: Double,
     structuralEvidence: Double,
-    formScore: Double,
+    upperBodyEvidence: Double,
+    formEvidenceScore: Double,
     hasRenderableBody: Bool,
     pushupFloorState: Bool
   ) {
     let shoulderPair = bestPair(joints[.leftShoulder], joints[.rightShoulder])
     let hipPair = bestPair(joints[.leftHip], joints[.rightHip])
     let anklePair = bestPair(joints[.leftAnkle], joints[.rightAnkle], fallback: bestPair(joints[.leftKnee], joints[.rightKnee]))
-    let pushupFloorState = isLikelyPushupFloorState(joints: joints, shoulder: shoulderPair)
+    let shoulderMid = midpoint(joints[.leftShoulder]?.smoothedPosition, joints[.rightShoulder]?.smoothedPosition)
+    let pushupFloorState = isLikelyPushupFloorState(joints: joints, shoulderMid: shoulderMid)
 
-    let arm = bestArm(joints: joints)
-    let elbowAngle = arm.map { angle(a: $0.shoulder.smoothedPosition, b: $0.elbow.smoothedPosition, c: $0.wrist.smoothedPosition) } ?? 180
+    let leftArm = arm(shoulder: .leftShoulder, elbow: .leftElbow, wrist: .leftWrist, joints: joints)
+    let rightArm = arm(shoulder: .rightShoulder, elbow: .rightElbow, wrist: .rightWrist, joints: joints)
+    let bestRenderableArm = bestArm(joints: joints)
+    let leftElbowAngle = leftArm.map { angle(a: $0.shoulder.smoothedPosition, b: $0.elbow.smoothedPosition, c: $0.wrist.smoothedPosition) }
+    let rightElbowAngle = rightArm.map { angle(a: $0.shoulder.smoothedPosition, b: $0.elbow.smoothedPosition, c: $0.wrist.smoothedPosition) }
+    let elbowAngles = [leftElbowAngle, rightElbowAngle].compactMap { $0 }
+    let hasElbowMeasurement = !elbowAngles.isEmpty
+    let elbowAngle = hasElbowMeasurement
+      ? elbowAngles.reduce(CGFloat(0), +) / CGFloat(elbowAngles.count)
+      : 180
+    let renderableArmCount = elbowAngles.count
+    let bilateralElbowAngleDelta: CGFloat
+    if let leftElbowAngle, let rightElbowAngle {
+      bilateralElbowAngleDelta = abs(leftElbowAngle - rightElbowAngle)
+    } else {
+      bilateralElbowAngleDelta = 0
+    }
 
-    let shoulderY = shoulderPair?.smoothedPosition.y ?? arm?.shoulder.smoothedPosition.y ?? 0.5
+    let shoulderY = shoulderMid?.y ?? shoulderPair?.smoothedPosition.y ?? bestRenderableArm?.shoulder.smoothedPosition.y ?? 0.5
+    let hipMid = midpoint(joints[.leftHip]?.smoothedPosition, joints[.rightHip]?.smoothedPosition)
+    let torsoY = midpoint(shoulderMid, hipMid)?.y ?? shoulderY
+
+    let shoulderHipLineQuality: Double = {
+      guard let shoulderMid else { return 0.18 }
+      guard let hipMid else {
+        if bestRenderableArm != nil {
+          return pushupFloorState ? 0.42 : 0.3
+        }
+        return pushupFloorState ? 0.44 : 0.26
+      }
+      let segmentLength = distance(shoulderMid, hipMid)
+      let lengthScore = min(1, max(0, Double((segmentLength - 0.06) / 0.24)))
+      let confidenceScore = max(
+        Double(bestPair(joints[.leftShoulder], joints[.rightShoulder])?.renderConfidence ?? 0),
+        Double(bestPair(joints[.leftHip], joints[.rightHip])?.renderConfidence ?? 0)
+      )
+      return min(1, max(0.2, lengthScore * 0.62 + confidenceScore * 0.38))
+    }()
 
     let torsoStability: Double
     if let shoulder = shoulderPair, let hip = hipPair, let ankle = anklePair {
@@ -162,16 +385,48 @@ final class PushupRepDetector {
       torsoStability = 0.32
     }
 
-    let usable = joints.values.filter(\.isLogicUsable)
-    let measuredLike = usable.filter { $0.sourceType == .measured || $0.sourceType == .lowConfidenceMeasured }
-    let measuredEvidence = usable.isEmpty ? 0 : Double(measuredLike.count) / Double(usable.count)
+    let coreEvidenceJoints: [PushlyJointName] = [
+      .leftShoulder, .rightShoulder,
+      .leftElbow, .rightElbow,
+      .leftWrist, .rightWrist,
+      .leftHip, .rightHip
+    ]
+    let measuredEvidence = measuredEvidenceScore(joints: joints, candidates: coreEvidenceJoints, floorState: pushupFloorState)
     let structuralEvidence = structuralEvidenceScore(joints: joints, floorState: pushupFloorState)
+    let upperBodyEvidence = measuredEvidenceScore(
+      joints: joints,
+      candidates: [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist],
+      floorState: pushupFloorState
+    )
 
-    let evidence = max(measuredEvidence, structuralEvidence)
-    let formScore = max(0.16, min(0.99, torsoStability * 0.56 + evidence * 0.44))
-    let hasRenderableBody = joints.values.filter(\.isRenderable).count >= 4 || (pushupFloorState && shoulderPair != nil && arm != nil)
+    let evidence = max(measuredEvidence, structuralEvidence, upperBodyEvidence)
+    let formEvidenceScore = max(
+      0.16,
+      min(
+        0.99,
+        torsoStability * 0.42
+          + shoulderHipLineQuality * 0.28
+          + evidence * 0.3
+      )
+    )
+    let hasRenderableBody = joints.values.filter(\.isRenderable).count >= 4 || (pushupFloorState && shoulderPair != nil && bestRenderableArm != nil)
 
-    return (elbowAngle, shoulderY, torsoStability, measuredEvidence, structuralEvidence, formScore, hasRenderableBody, pushupFloorState)
+    return (
+      elbowAngle,
+      hasElbowMeasurement,
+      renderableArmCount,
+      bilateralElbowAngleDelta,
+      shoulderY,
+      torsoY,
+      torsoStability,
+      shoulderHipLineQuality,
+      measuredEvidence,
+      structuralEvidence,
+      upperBodyEvidence,
+      formEvidenceScore,
+      hasRenderableBody,
+      pushupFloorState
+    )
   }
 
   private func bestPair(_ a: TrackedJoint?, _ b: TrackedJoint?, fallback: TrackedJoint? = nil) -> TrackedJoint? {
@@ -229,10 +484,9 @@ final class PushupRepDetector {
     joints: [PushlyJointName: TrackedJoint],
     floorState: Bool
   ) -> Double {
-    let required: [PushlyJointName] = floorState
-      ? [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftHip, .rightHip]
-      : [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftHip, .rightHip, .leftAnkle, .rightAnkle]
-    let score = required.reduce(0.0) { partial, name in
+    let core: [PushlyJointName] = [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist, .leftHip, .rightHip]
+    let lowerSupport: [PushlyJointName] = [.leftKnee, .rightKnee, .leftAnkle, .rightAnkle]
+    let coreScore = core.reduce(0.0) { partial, name in
       guard let joint = joints[name], joint.isRenderable else { return partial }
       let sourceWeight: Double
       switch joint.sourceType {
@@ -241,29 +495,76 @@ final class PushupRepDetector {
       case .lowConfidenceMeasured:
         sourceWeight = 0.85
       case .inferred:
-        sourceWeight = floorState ? 0.72 : 0.42
+        sourceWeight = floorState ? 0.74 : 0.5
       case .predicted:
-        sourceWeight = 0.18
+        sourceWeight = floorState ? 0.26 : 0.16
       case .missing:
         sourceWeight = 0
       }
       return partial + sourceWeight * Double(max(0.18, joint.renderConfidence))
     }
-    return min(1, score / Double(required.count) * 1.4)
+    let lowerSupportScore = lowerSupport.reduce(0.0) { partial, name in
+      guard let joint = joints[name], joint.isRenderable else { return partial }
+      let sourceWeight: Double = {
+        switch joint.sourceType {
+        case .measured: return 1.0
+        case .lowConfidenceMeasured: return 0.82
+        case .inferred: return floorState ? 0.48 : 0.36
+        case .predicted: return 0.12
+        case .missing: return 0
+        }
+      }()
+      return partial + sourceWeight * Double(max(0.16, joint.renderConfidence))
+    }
+    let coreNormalized = min(1, coreScore / Double(core.count) * 1.32)
+    let lowerNormalized = min(1, lowerSupportScore / Double(lowerSupport.count) * 1.1)
+    return min(1, coreNormalized * 0.84 + lowerNormalized * (floorState ? 0.08 : 0.16))
+  }
+
+  private func measuredEvidenceScore(
+    joints: [PushlyJointName: TrackedJoint],
+    candidates: [PushlyJointName],
+    floorState: Bool
+  ) -> Double {
+    let total = candidates.reduce(0.0) { partial, name in
+      guard let joint = joints[name], joint.isRenderable else { return partial }
+      let sourceWeight: Double = {
+        switch joint.sourceType {
+        case .measured: return 1.0
+        case .lowConfidenceMeasured: return 0.82
+        case .inferred: return floorState ? 0.58 : 0.42
+        case .predicted: return floorState ? 0.26 : 0.16
+        case .missing: return 0
+        }
+      }()
+      return partial + sourceWeight * Double(max(0.18, joint.logicConfidence))
+    }
+    return min(1, total / Double(candidates.count) * 1.25)
+  }
+
+  private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+    hypot(a.x - b.x, a.y - b.y)
   }
 
   private func isLikelyPushupFloorState(
     joints: [PushlyJointName: TrackedJoint],
-    shoulder: TrackedJoint?
+    shoulderMid: CGPoint?
   ) -> Bool {
     guard let nose = joints[.nose], nose.isRenderable else {
       return false
     }
-    let shoulderMid = midpoint(shoulder?.smoothedPosition, joints[.rightShoulder]?.smoothedPosition)
     guard let shoulderMid else {
       return false
     }
-    return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < 0.16
+    let hipMid = midpoint(joints[.leftHip]?.smoothedPosition, joints[.rightHip]?.smoothedPosition)
+    let shoulderHipDelta: Double
+    if let hipMid {
+      shoulderHipDelta = abs(Double(hipMid.y - shoulderMid.y))
+    } else {
+      shoulderHipDelta = 0
+    }
+    return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < config.rep.floorStateNoseShoulderDeltaMax &&
+      shoulderHipDelta < config.rep.floorStateShoulderHipDeltaMax
   }
 
   private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {

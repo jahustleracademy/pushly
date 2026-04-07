@@ -4,6 +4,15 @@ import AVFoundation
 import UIKit
 
 final class PushlyNativeCameraView: ExpoView {
+  private struct TorsoReferenceFrame {
+    let shoulderMid: CGPoint
+    let hipMid: CGPoint
+    let longitudinal: CGVector
+    let lateral: CGVector
+    let shoulderSpan: CGFloat
+    let torsoLength: CGFloat
+  }
+
   private weak static var latestInstance: PushlyNativeCameraView?
 
   static func exportLatestDebugSession(completion: @escaping (Result<String, Error>) -> Void) {
@@ -106,6 +115,12 @@ final class PushlyNativeCameraView: ExpoView {
   private var renderTrackedSpringRms: Double = 0
   private var renderRelockMs: Double = 0
   private var renderBackend: PoseBackendKind = .visionFallback
+  private var renderGraceUntil: TimeInterval = 0
+  private var pushupBottomRenderGraceUntil: TimeInterval = 0
+  private var deferredTemporalResetUntil: TimeInterval = 0
+  private var renderGraceActive = false
+  private var lastRenderableJoints: [PushlyJointName: TrackedJoint] = [:]
+  private var lastBottomTorsoFrame: TorsoReferenceFrame?
   private var latestInstructionText = "Halte deinen Körper lang und stabil."
 
   required init(appContext: AppContext? = nil) {
@@ -125,7 +140,10 @@ final class PushlyNativeCameraView: ExpoView {
     layer.addSublayer(glowLayer)
     layer.addSublayer(cameraManager.previewLayer)
 
-    skeletonRenderer = SkeletonRenderer(containerLayer: layer)
+    skeletonRenderer = SkeletonRenderer(
+      containerLayer: layer,
+      lineEndpointAlpha: config.smoothing.renderLineEndpointAlpha
+    )
 
     feedbackLabel.textColor = .white
     feedbackLabel.font = .systemFont(ofSize: 15, weight: .semibold)
@@ -289,6 +307,7 @@ final class PushlyNativeCameraView: ExpoView {
         modeHint: processed.mode == .unknown ? nil : processed.mode,
         modeHintConfidence: processed.modeConfidence,
         coverage: processed.coverage,
+        segmentationBottomAssistActive: processed.backendDiagnostics.segmentationBottomAssistActive,
         now: nowClock,
         reacquire: reacquireObservation
       )
@@ -307,7 +326,21 @@ final class PushlyNativeCameraView: ExpoView {
       }
 
       if continuityTracker.poseState == .lost {
-        temporalTracker.hardReset()
+        if continuityTracker.pushupFloorModeActive {
+          deferredTemporalResetUntil = max(
+            deferredTemporalResetUntil,
+            nowClock + config.smoothing.pushupBottomTemporalResetGraceSeconds
+          )
+          if nowClock > deferredTemporalResetUntil {
+            temporalTracker.hardReset()
+            deferredTemporalResetUntil = 0
+          }
+        } else {
+          temporalTracker.hardReset()
+          deferredTemporalResetUntil = 0
+        }
+      } else {
+        deferredTemporalResetUntil = 0
       }
 
       let now = Date().timeIntervalSince1970
@@ -316,29 +349,140 @@ final class PushlyNativeCameraView: ExpoView {
         measured: processed.measured,
         lowLightDetected: processed.lowLightDetected,
         roiHint: continuityTracker.lastStableROI,
-        frameTimestamp: now
+        frameTimestamp: now,
+        tooCloseFallbackActive: processed.backendDiagnostics.tooCloseFallbackActive,
+        reacquireActive: continuityTracker.state != .tracking
       )
       diagnostics.endSignpost(smoothingSignpost)
 
       let allowsRendering = continuityTracker.poseState.allowsRendering
-      let jointsForOutput = (allowsRendering && tracked.count >= 3) ? tracked : [:]
+      let jointsForLogic = (allowsRendering && tracked.count >= config.pipeline.logicMinJointCount) ? tracked : [:]
+      let pushupBottomOcclusionCandidate = continuityTracker.pushupFloorModeActive
+      let segmentationBottomAssist = pushupBottomOcclusionCandidate
+        && processed.backendDiagnostics.segmentationBottomAssistActive
+      let floorRenderJoints = pushupBottomOcclusionCandidate
+        ? buildPushupBottomRenderJoints(current: tracked, fallback: lastRenderableJoints)
+        : [:]
+      if !pushupBottomOcclusionCandidate {
+        lastBottomTorsoFrame = nil
+      }
+      let floorCoreCount = countPushupBottomCoreJoints(in: floorRenderJoints)
+      let pushupBottomCoreRequired = segmentationBottomAssist
+        ? max(3, config.pipeline.pushupBottomRenderCoreMinJointCount - 1)
+        : config.pipeline.pushupBottomRenderCoreMinJointCount
+      let hasPushupBottomRenderableCore = floorCoreCount >= pushupBottomCoreRequired
+      let jointsForRender: [PushlyJointName: TrackedJoint]
+      let isRenderGraceActive: Bool
+      let bottomRenderDisappearReason: String?
+      if !jointsForLogic.isEmpty {
+        jointsForRender = jointsForLogic
+        renderGraceUntil = now + config.smoothing.renderPersistenceGraceSeconds
+        if pushupBottomOcclusionCandidate {
+          let baseBottomGrace = now + config.smoothing.pushupBottomRenderGraceSeconds
+          let assistBottomGrace = segmentationBottomAssist
+            ? now + config.smoothing.pushupBottomRenderGraceSeconds + config.smoothing.segmentationBottomAssistRenderGraceSeconds
+            : baseBottomGrace
+          pushupBottomRenderGraceUntil = max(pushupBottomRenderGraceUntil, assistBottomGrace)
+        }
+        lastRenderableJoints = jointsForLogic
+        isRenderGraceActive = false
+        bottomRenderDisappearReason = nil
+      } else if pushupBottomOcclusionCandidate && hasPushupBottomRenderableCore {
+        jointsForRender = floorRenderJoints
+        renderGraceUntil = max(renderGraceUntil, now + config.smoothing.renderPersistenceGraceSeconds)
+        let baseBottomGrace = now + config.smoothing.pushupBottomRenderGraceSeconds
+        let assistBottomGrace = segmentationBottomAssist
+          ? now + config.smoothing.pushupBottomRenderGraceSeconds + config.smoothing.segmentationBottomAssistRenderGraceSeconds
+          : baseBottomGrace
+        pushupBottomRenderGraceUntil = max(pushupBottomRenderGraceUntil, assistBottomGrace)
+        lastRenderableJoints = floorRenderJoints
+        isRenderGraceActive = true
+        bottomRenderDisappearReason = nil
+      } else if now <= max(renderGraceUntil, pushupBottomRenderGraceUntil) {
+        if pushupBottomOcclusionCandidate && now <= pushupBottomRenderGraceUntil {
+          let pushupBottomMinJointCount = segmentationBottomAssist
+            ? max(3, config.pipeline.pushupBottomRenderMinJointCount - 1)
+            : config.pipeline.pushupBottomRenderMinJointCount
+          if floorRenderJoints.count >= pushupBottomMinJointCount {
+            jointsForRender = floorRenderJoints
+            lastRenderableJoints = floorRenderJoints
+          } else if lastRenderableJoints.count >= pushupBottomMinJointCount {
+            jointsForRender = buildPushupBottomRenderJoints(current: [:], fallback: lastRenderableJoints)
+          } else {
+            jointsForRender = [:]
+          }
+        } else if tracked.count >= config.pipeline.renderPersistenceMinJointCount {
+          jointsForRender = tracked
+          lastRenderableJoints = tracked
+        } else if lastRenderableJoints.count >= config.pipeline.renderPersistenceMinJointCount {
+          jointsForRender = lastRenderableJoints
+        } else {
+          jointsForRender = [:]
+        }
+        isRenderGraceActive = !jointsForRender.isEmpty
+        if pushupBottomOcclusionCandidate && jointsForRender.isEmpty {
+          let pushupBottomMinJointCount = segmentationBottomAssist
+            ? max(3, config.pipeline.pushupBottomRenderMinJointCount - 1)
+            : config.pipeline.pushupBottomRenderMinJointCount
+          if floorCoreCount < pushupBottomCoreRequired {
+            bottomRenderDisappearReason = "bottom_core_insufficient"
+          } else if floorRenderJoints.count < pushupBottomMinJointCount {
+            bottomRenderDisappearReason = "bottom_min_joints_unmet"
+          } else if lastRenderableJoints.count < pushupBottomMinJointCount {
+            bottomRenderDisappearReason = "bottom_fallback_unavailable"
+          } else {
+            bottomRenderDisappearReason = "bottom_grace_branch_no_render"
+          }
+        } else {
+          bottomRenderDisappearReason = nil
+        }
+      } else {
+        jointsForRender = [:]
+        renderGraceUntil = 0
+        pushupBottomRenderGraceUntil = 0
+        lastRenderableJoints = [:]
+        lastBottomTorsoFrame = nil
+        isRenderGraceActive = false
+        bottomRenderDisappearReason = pushupBottomOcclusionCandidate ? "bottom_grace_expired" : nil
+      }
 
-      let avgConfidence = averageConfidence(of: jointsForOutput)
-      let avgVelocity = averageVelocityMagnitude(of: jointsForOutput)
+      let avgConfidence = averageConfidence(of: jointsForRender)
+      let avgVelocity = averageVelocityMagnitude(of: jointsForRender)
       let qualitySignpost = diagnostics.beginSignpost(.qualityEvaluation)
       let quality = qualityEvaluator.evaluate(
-        joints: jointsForOutput,
+        joints: jointsForLogic,
         lowLightDetected: processed.lowLightDetected,
         trackingState: continuityTracker.state,
         poseState: continuityTracker.poseState,
         poseMode: continuityTracker.bodyMode,
+        pushupFloorModeActive: continuityTracker.pushupFloorModeActive,
         modeConfidence: continuityTracker.modeConfidence,
         roiCoverage: continuityTracker.roiCoverage,
         coverageHint: continuityTracker.coverage
       )
       diagnostics.endSignpost(qualitySignpost)
 
-      let rep = repDetector.update(joints: jointsForOutput, quality: quality, repTarget: repTarget)
+      let rep = repDetector.update(joints: jointsForLogic, quality: quality, repTarget: repTarget)
+      let bottomPhaseActive = rep.state == .bottomReached || rep.state == .ascending || rep.state == .descending
+      let bottomRenderPersistenceActive = pushupBottomOcclusionCandidate && isRenderGraceActive
+      let torsoAnchorAvailable = hasTorsoAnchor(in: floorRenderJoints.isEmpty ? jointsForRender : floorRenderJoints)
+      let armAnchorAvailable = hasArmAnchor(in: floorRenderJoints.isEmpty ? jointsForRender : floorRenderJoints)
+      let bottomRepNotCountedReason: String? = {
+        guard bottomPhaseActive, rep.state != .repCounted else { return nil }
+        if !rep.blockedReasons.isEmpty {
+          return rep.blockedReasons.joined(separator: ",")
+        }
+        switch rep.state {
+        case .descending:
+          return "bottom_not_confirmed"
+        case .bottomReached:
+          return "ascent_not_confirmed"
+        case .ascending:
+          return "cycle_not_completed"
+        default:
+          return "count_gate_not_met"
+        }
+      }()
       let instruction = instructionEngine.makeInstruction(
         quality: quality,
         repState: rep.state,
@@ -363,11 +507,12 @@ final class PushlyNativeCameraView: ExpoView {
 
       DispatchQueue.main.async {
         self.updateRendererProjectionContext()
-        self.renderJoints = jointsForOutput
+        self.renderJoints = jointsForRender
         self.renderState = self.continuityTracker.poseState
         self.renderMode = self.continuityTracker.bodyMode
+        self.renderGraceActive = isRenderGraceActive
         self.renderAvgVelocity = avgVelocity
-        self.renderJointCount = jointsForOutput.count
+        self.renderJointCount = jointsForRender.count
         self.renderAvgConfidence = avgConfidence
         self.renderRoiCoverage = quality.roiCoverage
         self.renderReliability = quality.reliability
@@ -395,12 +540,34 @@ final class PushlyNativeCameraView: ExpoView {
         orientation: orientation,
         inferenceDurationMs: processed.backendDiagnostics.durationMs,
         pipelineDurationMs: (CACurrentMediaTime() - processingStarted) * 1000,
-        renderedJointCount: jointsForOutput.count,
-        inferredJointRatio: quality.inferredJointRatio
+        renderedJointCount: jointsForRender.count,
+        inferredJointRatio: quality.inferredJointRatio,
+        measuredJointCount: sourceTypeCount(in: jointsForRender, type: .measured),
+        lowConfidenceMeasuredJointCount: sourceTypeCount(in: jointsForRender, type: .lowConfidenceMeasured),
+        inferredJointCount: sourceTypeCount(in: jointsForRender, type: .inferred),
+        predictedJointCount: sourceTypeCount(in: jointsForRender, type: .predicted),
+        missingJointCount: sourceTypeCount(in: jointsForRender, type: .missing),
+        pushupBlockedReasons: rep.blockedReasons,
+        sideLockSwapped: temporalTracker.sideIdentityDiagnostics.lockSwapped,
+        sideSwapEvidenceStreak: temporalTracker.sideIdentityDiagnostics.swapEvidenceStreak,
+        sideKeepEvidenceStreak: temporalTracker.sideIdentityDiagnostics.keepEvidenceStreak,
+        sideSwapAppliedThisFrame: temporalTracker.sideIdentityDiagnostics.swapAppliedThisFrame,
+        tooCloseFallbackActive: processed.backendDiagnostics.tooCloseFallbackActive,
+        tooCloseInferredHipCount: processed.backendDiagnostics.tooCloseInferredHipCount,
+        cameraProcessingBacklog: latestCameraTelemetry?.processingBacklog ?? 0,
+        cameraAverageProcessingMs: latestCameraTelemetry?.averageProcessingMs ?? 0,
+        bottomPhaseActive: bottomPhaseActive,
+        pushupFloorModeActive: continuityTracker.pushupFloorModeActive,
+        segmentationAssistActive: processed.backendDiagnostics.segmentationBottomAssistActive,
+        bottomRenderPersistenceActive: bottomRenderPersistenceActive,
+        torsoAnchorAvailable: torsoAnchorAvailable,
+        armAnchorAvailable: armAnchorAvailable,
+        bottomRenderDisappearReason: bottomRenderDisappearReason,
+        bottomRepNotCountedReason: bottomRepNotCountedReason
       )
 
       emitPoseFrame(
-        joints: jointsForOutput,
+        joints: jointsForRender,
         quality: quality,
         rep: rep,
         instruction: latestInstructionText,
@@ -461,6 +628,12 @@ final class PushlyNativeCameraView: ExpoView {
       self.renderRawTrackedRms = 0
       self.renderTrackedSpringRms = 0
       self.renderRelockMs = 0
+      self.renderGraceUntil = 0
+      self.pushupBottomRenderGraceUntil = 0
+      self.deferredTemporalResetUntil = 0
+      self.renderGraceActive = false
+      self.lastRenderableJoints = [:]
+      self.lastBottomTorsoFrame = nil
     }
 
     let fallbackInstruction = latestLowLight
@@ -476,7 +649,7 @@ final class PushlyNativeCameraView: ExpoView {
     onPoseFrame([
       "bodyDetected": false,
       "confidence": 0,
-      "formScore": 0,
+      "formEvidenceScore": 0,
       "instruction": fallbackInstruction,
       "joints": [],
       "repCount": repDetector.repCount,
@@ -626,7 +799,9 @@ final class PushlyNativeCameraView: ExpoView {
   }
 
   private func renderSkeleton(joints: [PushlyJointName: TrackedJoint], state: BodyState, debugMode: Bool, avgBodyVelocity: Double) -> SkeletonRenderDiagnostics {
-    let canRender = showSkeleton && state.allowsRendering && joints.count >= 3
+    let canRender = showSkeleton
+      && joints.count >= config.pipeline.renderPersistenceMinJointCount
+      && (state.allowsRendering || renderGraceActive)
     return skeletonRenderer?.render(
       joints: joints,
       in: bounds,
@@ -708,10 +883,221 @@ final class PushlyNativeCameraView: ExpoView {
     return total / Double(joints.count)
   }
 
+  private func sourceTypeCount(in joints: [PushlyJointName: TrackedJoint], type: PushlyJointSourceType) -> Int {
+    PushlyJointName.allCases.reduce(0) { partial, jointName in
+      if joints[jointName]?.sourceType == type {
+        return partial + 1
+      }
+      if joints[jointName] == nil, type == .missing {
+        return partial + 1
+      }
+      return partial
+    }
+  }
+
   private func averageVelocityMagnitude(of joints: [PushlyJointName: TrackedJoint]) -> Double {
     guard !joints.isEmpty else { return 0 }
     let total = joints.values.map { sqrt(Double($0.velocity.dx * $0.velocity.dx + $0.velocity.dy * $0.velocity.dy)) }.reduce(0, +)
     return total / Double(joints.count)
+  }
+
+  private func buildPushupBottomRenderJoints(
+    current: [PushlyJointName: TrackedJoint],
+    fallback: [PushlyJointName: TrackedJoint]
+  ) -> [PushlyJointName: TrackedJoint] {
+    let fallbackFrame = torsoReferenceFrame(from: fallback, fallbackFrame: lastBottomTorsoFrame)
+    let targetFrame = torsoReferenceFrame(from: current, fallbackFrame: fallbackFrame ?? lastBottomTorsoFrame)
+
+    let priority: [PushlyJointName] = [
+      .leftShoulder, .rightShoulder,
+      .leftElbow, .rightElbow,
+      .leftWrist, .rightWrist,
+      .leftHip, .rightHip,
+      .nose, .head
+    ]
+    var result: [PushlyJointName: TrackedJoint] = [:]
+    for name in priority {
+      if let joint = current[name], joint.sourceType != .missing {
+        result[name] = joint
+        continue
+      }
+      if var joint = fallback[name], joint.sourceType != .missing {
+        if let sourceFrame = fallbackFrame,
+           let targetFrame,
+           let reprojected = reprojectBottomJoint(
+             fallbackJoint: joint,
+             sourceFrame: sourceFrame,
+             targetFrame: targetFrame
+           ) {
+          joint.rawPosition = reprojected
+          joint.smoothedPosition = reprojected
+          joint.velocity = CGVector(dx: joint.velocity.dx * 0.5, dy: joint.velocity.dy * 0.5)
+          joint.renderConfidence = max(0.12, min(joint.renderConfidence, joint.renderConfidence * 0.95))
+          joint.logicConfidence = min(joint.logicConfidence, joint.renderConfidence)
+        }
+        result[name] = joint
+      }
+    }
+
+    if !result.isEmpty {
+      lastBottomTorsoFrame = targetFrame ?? fallbackFrame ?? lastBottomTorsoFrame
+    }
+    return result
+  }
+
+  private func torsoReferenceFrame(
+    from joints: [PushlyJointName: TrackedJoint],
+    fallbackFrame: TorsoReferenceFrame?
+  ) -> TorsoReferenceFrame? {
+    let leftShoulder = joints[.leftShoulder]?.smoothedPosition
+    let rightShoulder = joints[.rightShoulder]?.smoothedPosition
+    let leftHip = joints[.leftHip]?.smoothedPosition
+    let rightHip = joints[.rightHip]?.smoothedPosition
+
+    let shoulderMid = midpoint(leftShoulder, rightShoulder)
+      ?? leftShoulder
+      ?? rightShoulder
+      ?? fallbackFrame?.shoulderMid
+    guard let shoulderMid else { return nil }
+
+    let shoulderSpanRaw = distance(leftShoulder, rightShoulder)
+    let shoulderSpan = clamp(
+      shoulderSpanRaw ?? fallbackFrame?.shoulderSpan ?? 0.12,
+      min: 0.05,
+      max: 0.5
+    )
+
+    let hipMid = midpoint(leftHip, rightHip)
+      ?? leftHip
+      ?? rightHip
+      ?? fallbackFrame?.hipMid
+      ?? clampPoint(shoulderMid + (fallbackFrame?.longitudinal ?? CGVector(dx: 0, dy: -1)) * shoulderSpan)
+
+    var longitudinal = normalizedVector(from: shoulderMid, to: hipMid)
+    if vectorMagnitude(longitudinal) <= 0.0001 {
+      longitudinal = fallbackFrame?.longitudinal ?? CGVector(dx: 0, dy: -1)
+    }
+    longitudinal = normalize(longitudinal)
+
+    var lateral: CGVector
+    if let leftShoulder, let rightShoulder {
+      lateral = normalize(CGVector(dx: rightShoulder.x - leftShoulder.x, dy: rightShoulder.y - leftShoulder.y))
+    } else {
+      lateral = normalize(CGVector(dx: -longitudinal.dy, dy: longitudinal.dx))
+      if let fallbackLateral = fallbackFrame?.lateral, dot(lateral, fallbackLateral) < 0 {
+        lateral = lateral * -1
+      }
+    }
+
+    let torsoLength = clamp(
+      distance(shoulderMid, hipMid),
+      min: shoulderSpan * 0.7,
+      max: shoulderSpan * 1.8
+    )
+
+    return TorsoReferenceFrame(
+      shoulderMid: clampPoint(shoulderMid),
+      hipMid: clampPoint(hipMid),
+      longitudinal: longitudinal,
+      lateral: lateral,
+      shoulderSpan: shoulderSpan,
+      torsoLength: torsoLength
+    )
+  }
+
+  private func reprojectBottomJoint(
+    fallbackJoint: TrackedJoint,
+    sourceFrame: TorsoReferenceFrame,
+    targetFrame: TorsoReferenceFrame
+  ) -> CGPoint? {
+    let source = fallbackJoint.smoothedPosition
+    guard source.x.isFinite, source.y.isFinite else { return nil }
+    let delta = CGVector(dx: source.x - sourceFrame.shoulderMid.x, dy: source.y - sourceFrame.shoulderMid.y)
+    let latComponent = dot(delta, sourceFrame.lateral)
+    let longComponent = dot(delta, sourceFrame.longitudinal)
+
+    // Depth-like stabilization via torso-scale ratios; clamped to short plausible persistence.
+    let lateralScale = clamp(targetFrame.shoulderSpan / max(0.0001, sourceFrame.shoulderSpan), min: 0.82, max: 1.22)
+    let longitudinalScale = clamp(targetFrame.torsoLength / max(0.0001, sourceFrame.torsoLength), min: 0.84, max: 1.26)
+
+    let projected = clampPoint(
+      targetFrame.shoulderMid
+        + targetFrame.lateral * (latComponent * lateralScale)
+        + targetFrame.longitudinal * (longComponent * longitudinalScale)
+    )
+    guard projected.x.isFinite, projected.y.isFinite else { return nil }
+    return projected
+  }
+
+  private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {
+    guard let a, let b else { return nil }
+    return CGPoint(x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5)
+  }
+
+  private func distance(_ a: CGPoint?, _ b: CGPoint?) -> CGFloat? {
+    guard let a, let b else { return nil }
+    return hypot(a.x - b.x, a.y - b.y)
+  }
+
+  private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+    hypot(a.x - b.x, a.y - b.y)
+  }
+
+  private func clamp(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
+    Swift.min(maxValue, Swift.max(minValue, value))
+  }
+
+  private func clampPoint(_ point: CGPoint) -> CGPoint {
+    CGPoint(x: clamp(point.x, min: 0, max: 1), y: clamp(point.y, min: 0, max: 1))
+  }
+
+  private func normalizedVector(from a: CGPoint, to b: CGPoint) -> CGVector {
+    normalize(CGVector(dx: b.x - a.x, dy: b.y - a.y))
+  }
+
+  private func normalize(_ vector: CGVector) -> CGVector {
+    let magnitude = vectorMagnitude(vector)
+    guard magnitude > 0.0001 else { return CGVector(dx: 0, dy: -1) }
+    return CGVector(dx: vector.dx / magnitude, dy: vector.dy / magnitude)
+  }
+
+  private func vectorMagnitude(_ vector: CGVector) -> CGFloat {
+    hypot(vector.dx, vector.dy)
+  }
+
+  private func dot(_ a: CGVector, _ b: CGVector) -> CGFloat {
+    a.dx * b.dx + a.dy * b.dy
+  }
+
+  private func countPushupBottomCoreJoints(in joints: [PushlyJointName: TrackedJoint]) -> Int {
+    let core: [PushlyJointName] = [
+      .leftShoulder, .rightShoulder,
+      .leftElbow, .rightElbow,
+      .leftWrist, .rightWrist,
+      .leftHip, .rightHip
+    ]
+    return core.reduce(0) { partial, name in
+      if joints[name]?.isRenderable == true {
+        return partial + 1
+      }
+      return partial
+    }
+  }
+
+  private func hasTorsoAnchor(in joints: [PushlyJointName: TrackedJoint]) -> Bool {
+    let hasShoulders = joints[.leftShoulder]?.isRenderable == true || joints[.rightShoulder]?.isRenderable == true
+    let hasHips = joints[.leftHip]?.isRenderable == true || joints[.rightHip]?.isRenderable == true
+    return hasShoulders && (hasHips || lastBottomTorsoFrame != nil)
+  }
+
+  private func hasArmAnchor(in joints: [PushlyJointName: TrackedJoint]) -> Bool {
+    let leftArm = joints[.leftShoulder]?.isRenderable == true
+      && joints[.leftElbow]?.isRenderable == true
+      && joints[.leftWrist]?.isRenderable == true
+    let rightArm = joints[.rightShoulder]?.isRenderable == true
+      && joints[.rightElbow]?.isRenderable == true
+      && joints[.rightWrist]?.isRenderable == true
+    return leftArm || rightArm
   }
 }
 #else

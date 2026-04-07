@@ -64,6 +64,30 @@ struct PoseFrameSampleRecord: Codable {
   let pipelineDurationMs: Double
   let renderedJointCount: Int
   let inferredJointRatio: Double
+  let measuredJointCount: Int
+  let lowConfidenceMeasuredJointCount: Int
+  let inferredJointCount: Int
+  let predictedJointCount: Int
+  let missingJointCount: Int
+  let pushupBlockedReasons: [String]
+  let sideLockSwapped: Bool
+  let sideSwapEvidenceStreak: Int
+  let sideKeepEvidenceStreak: Int
+  let sideSwapAppliedThisFrame: Bool
+  let tooCloseFallbackActive: Bool
+  let tooCloseInferredHipCount: Int
+  let cameraProcessingBacklog: Double
+  let cameraAverageProcessingMs: Double
+  let roiJumpDistance: Double
+  let roiAreaJumpRatio: Double
+  let bottomPhaseActive: Bool
+  let pushupFloorModeActive: Bool
+  let segmentationAssistActive: Bool
+  let bottomRenderPersistenceActive: Bool
+  let torsoAnchorAvailable: Bool
+  let armAnchorAvailable: Bool
+  let bottomRenderDisappearReason: String?
+  let bottomRepNotCountedReason: String?
 }
 
 private struct PoseRuntimeDistribution {
@@ -119,6 +143,37 @@ struct PoseSessionSummary: Codable {
   let roiResetCount: Int
   let roiClampCount: Int
   let roiWidenCount: Int
+  let roiJumpCount: Int
+  let roiMaxJumpDistance: Double
+  let roiMaxAreaJumpRatio: Double
+  let reacquireAttemptsPerMinute: Double
+  let tooCloseFallbackFrameCount: Int
+  let tooCloseInferredHipTotal: Int
+  let sideSwapAppliedFrameCount: Int
+  let sideLockSwitchCount: Int
+  let totalMeasuredJointCount: Int
+  let totalLowConfidenceMeasuredJointCount: Int
+  let totalInferredJointCount: Int
+  let totalPredictedJointCount: Int
+  let totalMissingJointCount: Int
+  let pushupBlockedFrameCount: Int
+  let pushupBlockedReasonCounts: [String: Int]
+  let peakCameraProcessingBacklog: Double
+  let peakCameraAverageProcessingMs: Double
+  let peakInferenceDurationMs: Double
+  let peakPipelineDurationMs: Double
+  let pipelinePeakCountOver33ms: Int
+  let droppedLateFrames: Int
+  let droppedOutOfBuffers: Int
+  let lostTrackingFrameCount: Int
+  let bottomPhaseFrameCount: Int
+  let pushupFloorModeFrameCount: Int
+  let segmentationAssistFrameCount: Int
+  let bottomRenderPersistenceFrameCount: Int
+  let torsoAnchorAvailableFrameCount: Int
+  let armAnchorAvailableFrameCount: Int
+  let bottomRenderDisappearReasonCounts: [String: Int]
+  let bottomRepNotCountedReasonCounts: [String: Int]
 }
 
 struct PoseDebugExport: Codable {
@@ -173,6 +228,8 @@ final class PoseDiagnostics {
   private var frameCount = 0
   private var processedFrameCount = 0
   private var droppedFrameCount = 0
+  private var droppedLateFrames = 0
+  private var droppedOutOfBuffers = 0
   private var totalCameraFPS = 0.0
   private var cameraFPSSamples = 0
   private var totalProcessingFPS = 0.0
@@ -204,7 +261,44 @@ final class PoseDiagnostics {
   private var roiResetCount = 0
   private var roiClampCount = 0
   private var roiWidenCount = 0
+  private var roiJumpCount = 0
+  private var roiMaxJumpDistance = 0.0
+  private var roiMaxAreaJumpRatio = 0.0
+  private var lastROIJumpDistance = 0.0
+  private var lastROIAreaJumpRatio = 1.0
   private var lastROI: CGRect?
+
+  private var tooCloseFallbackFrameCount = 0
+  private var tooCloseInferredHipTotal = 0
+  private var sideSwapAppliedFrameCount = 0
+  private var sideLockSwitchCount = 0
+  private var lastSideLockSwapped: Bool?
+  private var tooCloseInvariantWarningCount = 0
+  private var tooCloseMissingHipWarningCount = 0
+
+  private var totalMeasuredJointCount = 0
+  private var totalLowConfidenceMeasuredJointCount = 0
+  private var totalInferredJointCount = 0
+  private var totalPredictedJointCount = 0
+  private var totalMissingJointCount = 0
+
+  private var pushupBlockedFrameCount = 0
+  private var pushupBlockedReasonCounts: [String: Int] = [:]
+
+  private var peakCameraProcessingBacklog = 0.0
+  private var peakCameraAverageProcessingMs = 0.0
+  private var peakInferenceDurationMs = 0.0
+  private var peakPipelineDurationMs = 0.0
+  private var pipelinePeakCountOver33ms = 0
+  private var lostTrackingFrameCount = 0
+  private var bottomPhaseFrameCount = 0
+  private var pushupFloorModeFrameCount = 0
+  private var segmentationAssistFrameCount = 0
+  private var bottomRenderPersistenceFrameCount = 0
+  private var torsoAnchorAvailableFrameCount = 0
+  private var armAnchorAvailableFrameCount = 0
+  private var bottomRenderDisappearReasonCounts: [String: Int] = [:]
+  private var bottomRepNotCountedReasonCounts: [String: Int] = [:]
 
   private var distribution = PoseRuntimeDistribution()
   private var lastState: BodyState = .lost
@@ -274,6 +368,10 @@ final class PoseDiagnostics {
     queue.async {
       self.totalCameraFPS += telemetry.captureFPS
       self.cameraFPSSamples += 1
+      self.droppedLateFrames = telemetry.droppedLateFrames
+      self.droppedOutOfBuffers = telemetry.droppedOutOfBuffers
+      self.peakCameraProcessingBacklog = max(self.peakCameraProcessingBacklog, telemetry.processingBacklog)
+      self.peakCameraAverageProcessingMs = max(self.peakCameraAverageProcessingMs, telemetry.averageProcessingMs)
       let dropRate = telemetry.dropRate
       if dropRate >= 0.2 {
         self.log(category: .camera, level: "warning", name: "camera_drop_rate_warning", fields: [
@@ -399,9 +497,23 @@ final class PoseDiagnostics {
 
       if let lastROI = self.lastROI {
         let lastArea = max(0.0001, Double(lastROI.width * lastROI.height))
+        let dx = Double((roi.midX - lastROI.midX))
+        let dy = Double((roi.midY - lastROI.midY))
+        let jumpDistance = sqrt(dx * dx + dy * dy)
+        self.lastROIJumpDistance = jumpDistance
+        self.roiMaxJumpDistance = max(self.roiMaxJumpDistance, jumpDistance)
+        if jumpDistance >= 0.08 {
+          self.roiJumpCount += 1
+        }
+        let areaRatio = max(area / lastArea, lastArea / max(0.0001, area))
+        self.lastROIAreaJumpRatio = areaRatio
+        self.roiMaxAreaJumpRatio = max(self.roiMaxAreaJumpRatio, areaRatio)
         if area / lastArea > 1.25 {
           self.roiWidenCount += 1
         }
+      } else {
+        self.lastROIJumpDistance = 0
+        self.lastROIAreaJumpRatio = 1
       }
     }
   }
@@ -470,7 +582,29 @@ final class PoseDiagnostics {
     inferenceDurationMs: Double,
     pipelineDurationMs: Double,
     renderedJointCount: Int,
-    inferredJointRatio: Double
+    inferredJointRatio: Double,
+    measuredJointCount: Int,
+    lowConfidenceMeasuredJointCount: Int,
+    inferredJointCount: Int,
+    predictedJointCount: Int,
+    missingJointCount: Int,
+    pushupBlockedReasons: [String],
+    sideLockSwapped: Bool,
+    sideSwapEvidenceStreak: Int,
+    sideKeepEvidenceStreak: Int,
+    sideSwapAppliedThisFrame: Bool,
+    tooCloseFallbackActive: Bool,
+    tooCloseInferredHipCount: Int,
+    cameraProcessingBacklog: Double,
+    cameraAverageProcessingMs: Double,
+    bottomPhaseActive: Bool = false,
+    pushupFloorModeActive: Bool = false,
+    segmentationAssistActive: Bool = false,
+    bottomRenderPersistenceActive: Bool = false,
+    torsoAnchorAvailable: Bool = false,
+    armAnchorAvailable: Bool = false,
+    bottomRenderDisappearReason: String? = nil,
+    bottomRepNotCountedReason: String? = nil
   ) {
     queue.async {
       self.processedFrameCount += 1
@@ -484,6 +618,79 @@ final class PoseDiagnostics {
       self.totalReliability += reliability
       self.coverageSamples += 1
       self.orientationValuesSeen.insert(orientation.rawValue)
+      self.peakInferenceDurationMs = max(self.peakInferenceDurationMs, inferenceDurationMs)
+      self.peakPipelineDurationMs = max(self.peakPipelineDurationMs, pipelineDurationMs)
+      if pipelineDurationMs >= 33 {
+        self.pipelinePeakCountOver33ms += 1
+      }
+      if trackingState == .lost {
+        self.lostTrackingFrameCount += 1
+      }
+      if bottomPhaseActive {
+        self.bottomPhaseFrameCount += 1
+      }
+      if pushupFloorModeActive {
+        self.pushupFloorModeFrameCount += 1
+      }
+      if segmentationAssistActive {
+        self.segmentationAssistFrameCount += 1
+      }
+      if bottomRenderPersistenceActive {
+        self.bottomRenderPersistenceFrameCount += 1
+      }
+      if torsoAnchorAvailable {
+        self.torsoAnchorAvailableFrameCount += 1
+      }
+      if armAnchorAvailable {
+        self.armAnchorAvailableFrameCount += 1
+      }
+      if let bottomRenderDisappearReason, !bottomRenderDisappearReason.isEmpty {
+        self.bottomRenderDisappearReasonCounts[bottomRenderDisappearReason, default: 0] += 1
+      }
+      if let bottomRepNotCountedReason, !bottomRepNotCountedReason.isEmpty {
+        self.bottomRepNotCountedReasonCounts[bottomRepNotCountedReason, default: 0] += 1
+      }
+      self.totalMeasuredJointCount += measuredJointCount
+      self.totalLowConfidenceMeasuredJointCount += lowConfidenceMeasuredJointCount
+      self.totalInferredJointCount += inferredJointCount
+      self.totalPredictedJointCount += predictedJointCount
+      self.totalMissingJointCount += missingJointCount
+      if !pushupBlockedReasons.isEmpty {
+        self.pushupBlockedFrameCount += 1
+        pushupBlockedReasons.forEach { reason in
+          self.pushupBlockedReasonCounts[reason, default: 0] += 1
+        }
+      }
+      if tooCloseFallbackActive {
+        self.tooCloseFallbackFrameCount += 1
+      }
+      self.tooCloseInferredHipTotal += tooCloseInferredHipCount
+      if sideSwapAppliedThisFrame {
+        self.sideSwapAppliedFrameCount += 1
+      }
+      if sideSwapAppliedThisFrame && tooCloseFallbackActive {
+        self.tooCloseInvariantWarningCount += 1
+        if self.tooCloseInvariantWarningCount <= 3 || self.tooCloseInvariantWarningCount % 25 == 0 {
+          self.log(category: .continuity, level: "warning", name: "too_close_invariant_side_swap_conflict", fields: [
+            "count": "\(self.tooCloseInvariantWarningCount)",
+            "frameIndex": "\(frameIndex)"
+          ])
+        }
+      }
+      if tooCloseFallbackActive && tooCloseInferredHipCount <= 0 {
+        self.tooCloseMissingHipWarningCount += 1
+        if self.tooCloseMissingHipWarningCount <= 3 || self.tooCloseMissingHipWarningCount % 25 == 0 {
+          self.log(category: .continuity, level: "warning", name: "too_close_invariant_missing_inferred_hips", fields: [
+            "count": "\(self.tooCloseMissingHipWarningCount)",
+            "frameIndex": "\(frameIndex)",
+            "inferredHipCount": "\(tooCloseInferredHipCount)"
+          ])
+        }
+      }
+      if let lastSideLockSwapped = self.lastSideLockSwapped, lastSideLockSwapped != sideLockSwapped {
+        self.sideLockSwitchCount += 1
+      }
+      self.lastSideLockSwapped = sideLockSwapped
 
       self.updateRuntimeDistribution(mode: mode, trackingState: trackingState, now: timestamp)
 
@@ -507,7 +714,31 @@ final class PoseDiagnostics {
             inferenceDurationMs: inferenceDurationMs,
             pipelineDurationMs: pipelineDurationMs,
             renderedJointCount: renderedJointCount,
-            inferredJointRatio: inferredJointRatio
+            inferredJointRatio: inferredJointRatio,
+            measuredJointCount: measuredJointCount,
+            lowConfidenceMeasuredJointCount: lowConfidenceMeasuredJointCount,
+            inferredJointCount: inferredJointCount,
+            predictedJointCount: predictedJointCount,
+            missingJointCount: missingJointCount,
+            pushupBlockedReasons: pushupBlockedReasons,
+            sideLockSwapped: sideLockSwapped,
+            sideSwapEvidenceStreak: sideSwapEvidenceStreak,
+            sideKeepEvidenceStreak: sideKeepEvidenceStreak,
+            sideSwapAppliedThisFrame: sideSwapAppliedThisFrame,
+            tooCloseFallbackActive: tooCloseFallbackActive,
+            tooCloseInferredHipCount: tooCloseInferredHipCount,
+            cameraProcessingBacklog: cameraProcessingBacklog,
+            cameraAverageProcessingMs: cameraAverageProcessingMs,
+            roiJumpDistance: self.lastROIJumpDistance,
+            roiAreaJumpRatio: self.lastROIAreaJumpRatio,
+            bottomPhaseActive: bottomPhaseActive,
+            pushupFloorModeActive: pushupFloorModeActive,
+            segmentationAssistActive: segmentationAssistActive,
+            bottomRenderPersistenceActive: bottomRenderPersistenceActive,
+            torsoAnchorAvailable: torsoAnchorAvailable,
+            armAnchorAvailable: armAnchorAvailable,
+            bottomRenderDisappearReason: bottomRenderDisappearReason,
+            bottomRepNotCountedReason: bottomRepNotCountedReason
           )
         )
       }
@@ -623,6 +854,8 @@ final class PoseDiagnostics {
 
   private func makeSummary() -> PoseSessionSummary {
     let dropRate = frameCount > 0 ? Double(droppedFrameCount) / Double(frameCount + droppedFrameCount) : 0
+    let sessionDurationSeconds = max(1, sessionEnd.timeIntervalSince(sessionStart))
+    let reacquireAttemptsPerMinute = Double(reacquireAttempts) / max(1.0 / 60.0, sessionDurationSeconds / 60.0)
     return PoseSessionSummary(
       sessionID: sessionID,
       appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown",
@@ -664,7 +897,38 @@ final class PoseDiagnostics {
       averageROIArea: roiSamples > 0 ? totalROIArea / Double(roiSamples) : 0,
       roiResetCount: roiResetCount,
       roiClampCount: roiClampCount,
-      roiWidenCount: roiWidenCount
+      roiWidenCount: roiWidenCount,
+      roiJumpCount: roiJumpCount,
+      roiMaxJumpDistance: roiMaxJumpDistance,
+      roiMaxAreaJumpRatio: roiMaxAreaJumpRatio,
+      reacquireAttemptsPerMinute: reacquireAttemptsPerMinute,
+      tooCloseFallbackFrameCount: tooCloseFallbackFrameCount,
+      tooCloseInferredHipTotal: tooCloseInferredHipTotal,
+      sideSwapAppliedFrameCount: sideSwapAppliedFrameCount,
+      sideLockSwitchCount: sideLockSwitchCount,
+      totalMeasuredJointCount: totalMeasuredJointCount,
+      totalLowConfidenceMeasuredJointCount: totalLowConfidenceMeasuredJointCount,
+      totalInferredJointCount: totalInferredJointCount,
+      totalPredictedJointCount: totalPredictedJointCount,
+      totalMissingJointCount: totalMissingJointCount,
+      pushupBlockedFrameCount: pushupBlockedFrameCount,
+      pushupBlockedReasonCounts: pushupBlockedReasonCounts,
+      peakCameraProcessingBacklog: peakCameraProcessingBacklog,
+      peakCameraAverageProcessingMs: peakCameraAverageProcessingMs,
+      peakInferenceDurationMs: peakInferenceDurationMs,
+      peakPipelineDurationMs: peakPipelineDurationMs,
+      pipelinePeakCountOver33ms: pipelinePeakCountOver33ms,
+      droppedLateFrames: droppedLateFrames,
+      droppedOutOfBuffers: droppedOutOfBuffers,
+      lostTrackingFrameCount: lostTrackingFrameCount,
+      bottomPhaseFrameCount: bottomPhaseFrameCount,
+      pushupFloorModeFrameCount: pushupFloorModeFrameCount,
+      segmentationAssistFrameCount: segmentationAssistFrameCount,
+      bottomRenderPersistenceFrameCount: bottomRenderPersistenceFrameCount,
+      torsoAnchorAvailableFrameCount: torsoAnchorAvailableFrameCount,
+      armAnchorAvailableFrameCount: armAnchorAvailableFrameCount,
+      bottomRenderDisappearReasonCounts: bottomRenderDisappearReasonCounts,
+      bottomRepNotCountedReasonCounts: bottomRepNotCountedReasonCounts
     )
   }
 

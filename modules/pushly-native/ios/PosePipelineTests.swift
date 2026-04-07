@@ -85,8 +85,8 @@ final class TrackContinuityManagerTests: XCTestCase {
     let manager = TrackContinuityManager(config: config)
 
     let now = CACurrentMediaTime()
-    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, now: now, reacquire: nil)
-    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, now: now + 0.03, reacquire: nil)
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: now, reacquire: nil)
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: now + 0.03, reacquire: nil)
 
     XCTAssertEqual(manager.poseState, .trackingUpperBody)
     XCTAssertNotEqual(manager.poseState, .lost)
@@ -98,13 +98,13 @@ final class TrackContinuityManagerTests: XCTestCase {
 
     let now = CACurrentMediaTime()
     for i in 0..<5 {
-      manager.update(measured: makeFullBody(), modeHint: .fullBody, modeHintConfidence: 0.9, coverage: nil, now: now + Double(i) * 0.03, reacquire: nil)
+      manager.update(measured: makeFullBody(), modeHint: .fullBody, modeHintConfidence: 0.9, coverage: nil, segmentationBottomAssistActive: false, now: now + Double(i) * 0.03, reacquire: nil)
     }
     XCTAssertEqual(manager.poseState, .trackingFullBody)
     XCTAssertEqual(manager.bodyMode, .fullBody)
 
     for i in 5..<11 {
-      manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, now: now + Double(i) * 0.03, reacquire: nil)
+      manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: now + Double(i) * 0.03, reacquire: nil)
     }
     XCTAssertEqual(manager.poseState, .trackingUpperBody)
     XCTAssertEqual(manager.bodyMode, .upperBody)
@@ -120,14 +120,46 @@ final class TrackContinuityManagerTests: XCTestCase {
       .leftShoulder: PoseJointMeasurement(name: .leftShoulder, point: CGPoint(x: 0.45, y: 0.7), confidence: 0.9, backend: .mediapipe)
     ]
 
-    manager.update(measured: ambiguous, modeHint: nil, modeHintConfidence: nil, coverage: nil, now: now, reacquire: nil)
+    manager.update(measured: ambiguous, modeHint: nil, modeHintConfidence: nil, coverage: nil, segmentationBottomAssistActive: false, now: now, reacquire: nil)
     XCTAssertEqual(manager.poseState, .reacquiring)
 
     for i in 1...7 {
-      manager.update(measured: [:], modeHint: nil, modeHintConfidence: nil, coverage: nil, now: now + Double(i) * 0.06, reacquire: nil)
+      manager.update(measured: [:], modeHint: nil, modeHintConfidence: nil, coverage: nil, segmentationBottomAssistActive: false, now: now + Double(i) * 0.06, reacquire: nil)
     }
 
     XCTAssertEqual(manager.poseState, .lost)
+  }
+
+  func testShortLossReacquiresWithoutEnteringLost() {
+    let config = PushlyPoseConfig()
+    let manager = TrackContinuityManager(config: config)
+
+    let now = CACurrentMediaTime()
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: now, reacquire: nil)
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: now + 0.03, reacquire: nil)
+    XCTAssertEqual(manager.poseState, .trackingUpperBody)
+
+    for i in 1..<config.mode.lostEnterFrames {
+      manager.update(
+        measured: [:],
+        modeHint: nil,
+        modeHintConfidence: nil,
+        coverage: nil,
+        segmentationBottomAssistActive: false,
+        now: now + 0.03 + Double(i) * 0.03,
+        reacquire: nil
+      )
+    }
+
+    XCTAssertNotEqual(manager.poseState, .lost)
+    XCTAssertEqual(manager.poseState, .reacquiring)
+
+    let relockStart = now + 0.03 + Double(config.mode.lostEnterFrames) * 0.03
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: relockStart, reacquire: nil)
+    manager.update(measured: makeUpperBody(), modeHint: .upperBody, modeHintConfidence: 0.8, coverage: nil, segmentationBottomAssistActive: false, now: relockStart + 0.03, reacquire: nil)
+
+    XCTAssertEqual(manager.poseState, .trackingUpperBody)
+    XCTAssertGreaterThan(manager.relockSuccessCount, 0)
   }
 
   private func makeUpperBody() -> [PushlyJointName: PoseJointMeasurement] {
@@ -205,6 +237,35 @@ final class TemporalJointTrackerTests: XCTestCase {
     XCTAssertTrue(occluded[.leftFoot]?.isRenderable == true)
   }
 
+  func testSideIdentityLockPreventsSingleFrameLeftRightFlip() {
+    let config = PushlyPoseConfig()
+    let tracker = TemporalJointTracker(config: config)
+    let now = CACurrentMediaTime()
+
+    _ = tracker.update(
+      measured: trackedFullBody(),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now
+    )
+
+    let flippedFrame = tracker.update(
+      measured: trackedFullBodyFlippedSides(),
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now + 0.033
+    )
+
+    XCTAssertLessThan(
+      flippedFrame[.leftShoulder]?.smoothedPosition.x ?? 1,
+      flippedFrame[.rightShoulder]?.smoothedPosition.x ?? 0
+    )
+    XCTAssertLessThan(
+      flippedFrame[.leftHip]?.smoothedPosition.x ?? 1,
+      flippedFrame[.rightHip]?.smoothedPosition.x ?? 0
+    )
+  }
+
   private func trackedUpperBody(hipConfidence: Float) -> [PushlyJointName: PoseJointMeasurement] {
     var joints: [PushlyJointName: PoseJointMeasurement] = [
       .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.5, y: 0.84), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
@@ -247,6 +308,24 @@ final class TemporalJointTrackerTests: XCTestCase {
       .rightShoulder: PoseJointMeasurement(name: .rightShoulder, point: CGPoint(x: 0.59, y: 0.65), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
       .leftHip: PoseJointMeasurement(name: .leftHip, point: CGPoint(x: 0.45, y: 0.49), confidence: 0.01, visibility: 0.01, presence: 0.01, sourceType: .lowConfidenceMeasured, inFrame: false, backend: .mediapipe),
       .rightHip: PoseJointMeasurement(name: .rightHip, point: CGPoint(x: 0.55, y: 0.49), confidence: 0.01, visibility: 0.01, presence: 0.01, sourceType: .lowConfidenceMeasured, inFrame: false, backend: .mediapipe)
+    ]
+  }
+
+  private func trackedFullBodyFlippedSides() -> [PushlyJointName: PoseJointMeasurement] {
+    [
+      .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.5, y: 0.84), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .leftShoulder: PoseJointMeasurement(name: .leftShoulder, point: CGPoint(x: 0.58, y: 0.72), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .rightShoulder: PoseJointMeasurement(name: .rightShoulder, point: CGPoint(x: 0.42, y: 0.72), confidence: 0.92, visibility: 0.92, presence: 0.92, backend: .mediapipe),
+      .leftElbow: PoseJointMeasurement(name: .leftElbow, point: CGPoint(x: 0.65, y: 0.61), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightElbow: PoseJointMeasurement(name: .rightElbow, point: CGPoint(x: 0.35, y: 0.61), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftWrist: PoseJointMeasurement(name: .leftWrist, point: CGPoint(x: 0.7, y: 0.52), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe),
+      .rightWrist: PoseJointMeasurement(name: .rightWrist, point: CGPoint(x: 0.3, y: 0.52), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe),
+      .leftHip: PoseJointMeasurement(name: .leftHip, point: CGPoint(x: 0.55, y: 0.49), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightHip: PoseJointMeasurement(name: .rightHip, point: CGPoint(x: 0.45, y: 0.49), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftKnee: PoseJointMeasurement(name: .leftKnee, point: CGPoint(x: 0.56, y: 0.28), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .rightKnee: PoseJointMeasurement(name: .rightKnee, point: CGPoint(x: 0.44, y: 0.28), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
+      .leftAnkle: PoseJointMeasurement(name: .leftAnkle, point: CGPoint(x: 0.57, y: 0.12), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe),
+      .rightAnkle: PoseJointMeasurement(name: .rightAnkle, point: CGPoint(x: 0.43, y: 0.12), confidence: 0.88, visibility: 0.88, presence: 0.88, backend: .mediapipe)
     ]
   }
 }
@@ -334,6 +413,7 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
       trackingQuality: 0.76,
       renderQuality: 0.78,
       logicQuality: 0.62,
+      pushupFloorModeActive: true,
       bodyVisibilityState: .assisted,
       trackingState: .tracking,
       poseTrackingState: .trackingFullBody,
@@ -360,6 +440,187 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
 
     XCTAssertEqual(output?.state, .plankLocked)
     XCTAssertFalse(output?.blockedReasons.contains("measured_evidence_low") ?? true)
+  }
+
+  func testFrontalElbowJitterAloneDoesNotCountRep() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      let joints = makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false)
+      output = detector.update(joints: joints, quality: quality, repTarget: 10)
+    }
+
+    for i in 0..<18 {
+      let elbowBend: CGFloat = i % 2 == 0 ? 0.94 : 0.08
+      let joints = makeFrontalJoints(shoulderY: 0.54, elbowBend: elbowBend, occludeElbows: false, asymmetricArms: false)
+      output = detector.update(joints: joints, quality: quality, repTarget: 10)
+    }
+
+    XCTAssertEqual(output?.repCount, 0)
+    XCTAssertNotEqual(output?.state, .repCounted)
+  }
+
+  func testFrontalCycleCountsExactlyOneRep() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let cycle: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.3, false),
+      (0.58, 0.62, false),
+      (0.60, 0.94, false),
+      (0.60, 0.96, false),
+      (0.58, 0.7, false),
+      (0.56, 0.38, false),
+      (0.54, 0.04, false),
+      (0.54, 0.02, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in cycle {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repCount, 1)
+  }
+
+  func testBottomOcclusionGraceAllowsRepCompletion() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let cycle: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.28, false),
+      (0.58, 0.58, false),
+      (0.60, 0.92, false),
+      (0.60, 0.94, true),
+      (0.60, 0.94, true),
+      (0.60, 0.94, true),
+      (0.58, 0.66, false),
+      (0.56, 0.34, false),
+      (0.54, 0.04, false),
+      (0.54, 0.02, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in cycle {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repCount, 1)
+  }
+
+  private func stableFloorQuality(visibleJointCount: Int) -> TrackingQuality {
+    TrackingQuality(
+      trackingQuality: 0.82,
+      renderQuality: 0.8,
+      logicQuality: 0.74,
+      pushupFloorModeActive: true,
+      bodyVisibilityState: .assisted,
+      trackingState: .tracking,
+      poseTrackingState: .trackingFullBody,
+      poseMode: .fullBody,
+      reasonCodes: [],
+      spreadScore: 0.62,
+      smoothedSpread: 0.62,
+      visibleJointCount: visibleJointCount,
+      upperBodyRenderableCount: 7,
+      reliability: 0.86,
+      roiCoverage: 0.5,
+      fullBodyCoverage: 0.44,
+      upperBodyCoverage: 0.94,
+      handCoverage: 0.86,
+      wristRetention: 0.98,
+      inferredJointRatio: 0.12,
+      modeConfidence: 0.86
+    )
+  }
+
+  private func makeFrontalJoints(
+    shoulderY: CGFloat,
+    elbowBend: CGFloat,
+    occludeElbows: Bool,
+    asymmetricArms: Bool
+  ) -> [PushlyJointName: TrackedJoint] {
+    let clampedBend = max(0, min(1, elbowBend))
+    let rightBend = asymmetricArms ? clampedBend * 0.25 : clampedBend
+    let hipY = shoulderY + 0.10
+    let ankleY = shoulderY + 0.20
+    let leftElbow = CGPoint(x: 0.34 + clampedBend * 0.03, y: shoulderY + clampedBend * 0.06)
+    let leftWrist = CGPoint(x: 0.26 + clampedBend * 0.04, y: shoulderY + clampedBend * 0.01)
+    let rightElbow = CGPoint(x: 0.66 - rightBend * 0.03, y: shoulderY + rightBend * 0.06)
+    let rightWrist = CGPoint(x: 0.74 - rightBend * 0.04, y: shoulderY + rightBend * 0.01)
+
+    return [
+      .nose: trackedJoint(.nose, x: 0.5, y: shoulderY + 0.03, render: 0.92, logic: 0.92, source: .measured, now: CACurrentMediaTime()),
+      .leftShoulder: trackedJoint(.leftShoulder, x: 0.42, y: shoulderY, render: 0.92, logic: 0.92, source: .measured, now: CACurrentMediaTime()),
+      .rightShoulder: trackedJoint(.rightShoulder, x: 0.58, y: shoulderY, render: 0.92, logic: 0.92, source: .measured, now: CACurrentMediaTime()),
+      .leftElbow: trackedJoint(
+        .leftElbow,
+        x: leftElbow.x,
+        y: leftElbow.y,
+        render: occludeElbows ? 0 : 0.88,
+        logic: occludeElbows ? 0 : 0.88,
+        source: occludeElbows ? .missing : .measured,
+        now: CACurrentMediaTime()
+      ),
+      .rightElbow: trackedJoint(
+        .rightElbow,
+        x: rightElbow.x,
+        y: rightElbow.y,
+        render: occludeElbows ? 0 : 0.88,
+        logic: occludeElbows ? 0 : 0.88,
+        source: occludeElbows ? .missing : .measured,
+        now: CACurrentMediaTime()
+      ),
+      .leftWrist: trackedJoint(
+        .leftWrist,
+        x: leftWrist.x,
+        y: leftWrist.y,
+        render: occludeElbows ? 0 : 0.86,
+        logic: occludeElbows ? 0 : 0.86,
+        source: occludeElbows ? .missing : .measured,
+        now: CACurrentMediaTime()
+      ),
+      .rightWrist: trackedJoint(
+        .rightWrist,
+        x: rightWrist.x,
+        y: rightWrist.y,
+        render: occludeElbows ? 0 : 0.86,
+        logic: occludeElbows ? 0 : 0.86,
+        source: occludeElbows ? .missing : .measured,
+        now: CACurrentMediaTime()
+      ),
+      .leftHip: trackedJoint(.leftHip, x: 0.46, y: hipY, render: 0.9, logic: 0.88, source: .measured, now: CACurrentMediaTime()),
+      .rightHip: trackedJoint(.rightHip, x: 0.54, y: hipY, render: 0.9, logic: 0.88, source: .measured, now: CACurrentMediaTime()),
+      .leftAnkle: trackedJoint(.leftAnkle, x: 0.49, y: ankleY, render: 0.86, logic: 0.84, source: .measured, now: CACurrentMediaTime()),
+      .rightAnkle: trackedJoint(.rightAnkle, x: 0.51, y: ankleY, render: 0.86, logic: 0.84, source: .measured, now: CACurrentMediaTime())
+    ]
   }
 
   private func trackedJoint(
@@ -395,6 +656,7 @@ final class InstructionEngineTests: XCTestCase {
       trackingQuality: 0.72,
       renderQuality: 0.75,
       logicQuality: 0.66,
+      pushupFloorModeActive: false,
       bodyVisibilityState: .assisted,
       trackingState: .tracking,
       poseTrackingState: .trackingUpperBody,
@@ -531,6 +793,7 @@ final class BridgePayloadCompatibilityTests: XCTestCase {
       trackingQuality: 0.8,
       renderQuality: 0.78,
       logicQuality: 0.82,
+      pushupFloorModeActive: false,
       bodyVisibilityState: .good,
       trackingState: .tracking,
       poseTrackingState: .trackingUpperBody,
@@ -550,7 +813,7 @@ final class BridgePayloadCompatibilityTests: XCTestCase {
       modeConfidence: 0.83
     )
 
-    let rep = RepDetectionOutput(state: .plankLocked, repCount: 1, formScore: 0.77, blockedReasons: [])
+    let rep = RepDetectionOutput(state: .plankLocked, repCount: 1, formEvidenceScore: 0.77, blockedReasons: [])
 
     let payload = mapper.makePayload(
       joints: joints,
@@ -614,7 +877,21 @@ final class PoseDiagnosticsTests: XCTestCase {
         inferenceDurationMs: 12,
         pipelineDurationMs: 18,
         renderedJointCount: 7,
-        inferredJointRatio: 0.1
+        inferredJointRatio: 0.1,
+        measuredJointCount: 6,
+        lowConfidenceMeasuredJointCount: 1,
+        inferredJointCount: 0,
+        predictedJointCount: 0,
+        missingJointCount: 11,
+        pushupBlockedReasons: [],
+        sideLockSwapped: false,
+        sideSwapEvidenceStreak: 0,
+        sideKeepEvidenceStreak: 2,
+        sideSwapAppliedThisFrame: false,
+        tooCloseFallbackActive: false,
+        tooCloseInferredHipCount: 0,
+        cameraProcessingBacklog: 0.1,
+        cameraAverageProcessingMs: 14
       )
     }
     diagnostics.endSession(reason: "unit_test")
@@ -642,6 +919,72 @@ final class PoseDiagnosticsTests: XCTestCase {
     let config = PushlyPoseConfig()
     let diagnostics = PoseDiagnostics(config: config)
     XCTAssertEqual(diagnostics.overlayEnabledByDefault, config.pipeline.debugOverlayEnabled)
+  }
+
+  func testDiagnosticsSummaryCountsTooCloseAndSideSwapFrames() throws {
+    let config = PushlyPoseConfig()
+    let diagnostics = PoseDiagnostics(config: config)
+    diagnostics.beginSession(cameraPosition: .front, mirrored: true, activeBackend: .mediapipe, fallbackAvailable: true)
+    diagnostics.recordReacquireAttempt(source: .face)
+    diagnostics.recordReacquireEnd(success: true, source: .face)
+
+    for i in 0..<4 {
+      diagnostics.recordFrameReceived()
+      diagnostics.recordProcessedFrame(
+        frameIndex: i,
+        timestamp: CACurrentMediaTime() + Double(i) * 0.03,
+        backend: .mediapipe,
+        mode: .upperBody,
+        trackingState: i == 1 ? .lost : .trackingUpperBody,
+        visibleJointCount: 6,
+        upperBodyCoverage: 0.72,
+        fullBodyCoverage: 0.18,
+        handCoverage: 0.58,
+        averageJointConfidence: 0.78,
+        reliability: 0.74,
+        roi: CGRect(x: 0.2, y: 0.3, width: 0.4, height: 0.45),
+        mirrored: true,
+        orientation: .leftMirrored,
+        inferenceDurationMs: 11,
+        pipelineDurationMs: 17,
+        renderedJointCount: 6,
+        inferredJointRatio: 0.12,
+        measuredJointCount: 5,
+        lowConfidenceMeasuredJointCount: 1,
+        inferredJointCount: i < 2 ? 2 : 0,
+        predictedJointCount: 0,
+        missingJointCount: 10,
+        pushupBlockedReasons: [],
+        sideLockSwapped: i >= 2,
+        sideSwapEvidenceStreak: i >= 2 ? 5 : 0,
+        sideKeepEvidenceStreak: i >= 2 ? 0 : 4,
+        sideSwapAppliedThisFrame: i == 2,
+        tooCloseFallbackActive: i < 2,
+        tooCloseInferredHipCount: i < 2 ? 2 : 0,
+        cameraProcessingBacklog: 0.08,
+        cameraAverageProcessingMs: 13
+      )
+    }
+    diagnostics.endSession(reason: "unit_test_counts")
+
+    let expect = expectation(description: "export-counts")
+    var exportedPath: String?
+    diagnostics.exportToDisk(configSnapshot: ["unit": "counts"]) { result in
+      if case .success(let url) = result {
+        exportedPath = url.path
+      }
+      expect.fulfill()
+    }
+    wait(for: [expect], timeout: 2.0)
+
+    XCTAssertNotNil(exportedPath)
+    let data = try Data(contentsOf: URL(fileURLWithPath: exportedPath!))
+    let decoded = try JSONDecoder().decode(PoseDebugExport.self, from: data)
+    XCTAssertEqual(decoded.summary.reacquireAttempts, 1)
+    XCTAssertEqual(decoded.summary.tooCloseFallbackFrameCount, 2)
+    XCTAssertEqual(decoded.summary.tooCloseInferredHipTotal, 4)
+    XCTAssertEqual(decoded.summary.sideSwapAppliedFrameCount, 1)
+    XCTAssertEqual(decoded.summary.lostTrackingFrameCount, 1)
   }
 }
 #endif

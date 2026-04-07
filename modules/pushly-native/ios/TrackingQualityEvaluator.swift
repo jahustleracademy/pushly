@@ -18,6 +18,7 @@ final class TrackingQualityEvaluator {
     trackingState: TrackingContinuityState,
     poseState: BodyState,
     poseMode: BodyTrackingMode,
+    pushupFloorModeActive: Bool,
     modeConfidence: Double,
     roiCoverage: Double,
     coverageHint: PoseVisibilityCoverage?
@@ -38,7 +39,7 @@ final class TrackingQualityEvaluator {
     let armScore = armIntegrityScore(joints: joints)
     let spreadScore = framingSpreadScore(joints: joints)
     smoothedSpread = updateSmoothedSpread(spreadScore)
-    let pushupFloorState = isLikelyPushupFloorState(joints: joints)
+    let pushupFloorState = pushupFloorModeActive || isLikelyPushupFloorState(joints: joints)
     let lowerBodySupport = lowerBodySupportScore(joints: joints, floorState: pushupFloorState)
     let continuityScore = temporalContinuityScore(joints: joints, floorState: pushupFloorState)
     let reliability = reliabilityScore(joints: joints, continuityScore: continuityScore)
@@ -101,7 +102,7 @@ final class TrackingQualityEvaluator {
       bodyVisibilityState = .notFound
     } else if trackingQuality < config.quality.assistedThreshold {
       bodyVisibilityState = .partial
-    } else if logicQuality < config.quality.pushupLogicMin && !pushupFloorState {
+    } else if logicQuality < (pushupFloorState ? config.quality.pushupFloorLogicMin : config.quality.pushupLogicMin) {
       bodyVisibilityState = .assisted
     } else if trackingQuality >= config.quality.goodThreshold {
       bodyVisibilityState = .good
@@ -113,6 +114,7 @@ final class TrackingQualityEvaluator {
       trackingQuality: trackingQuality,
       renderQuality: renderQuality,
       logicQuality: logicQuality,
+      pushupFloorModeActive: pushupFloorState,
       bodyVisibilityState: bodyVisibilityState,
       trackingState: trackingState,
       poseTrackingState: poseState,

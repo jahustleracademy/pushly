@@ -114,6 +114,13 @@ struct SkeletonRenderDiagnostics {
 }
 
 final class SkeletonRenderer {
+  private struct VirtualHeadAttachment {
+    let shoulderMid: CGPoint
+    let neck: CGPoint
+    let upperHead: CGPoint
+    let useInferredPath: Bool
+  }
+
   private let measuredLineLayer = CAShapeLayer()
   private let inferredLineLayer = CAShapeLayer()
   private let measuredJointLayer = CAShapeLayer()
@@ -123,9 +130,9 @@ final class SkeletonRenderer {
   private let springJointLayer = CAShapeLayer()
 
   private let springAnimator = JointSpringAnimator()
+  private let lineEndpointAlpha: CGFloat
 
   private let connections: [(PushlyJointName, PushlyJointName)] = [
-    (.nose, .head),
     (.leftShoulder, .rightShoulder),
     (.leftShoulder, .leftElbow),
     (.leftElbow, .leftWrist),
@@ -149,8 +156,17 @@ final class SkeletonRenderer {
   private var isVisible = false
   private var pendingHideWorkItem: DispatchWorkItem?
   private var projectionContext: PoseCoordinateConverter.ProjectionContext?
+  private var lastVirtualHeadAttachment: (shoulderMid: CGPoint, neck: CGPoint, upperHead: CGPoint)?
+  private var lastHeadUpDirection = CGVector(dx: 0, dy: 1)
+  private var lastShoulderMid: CGPoint?
+  private var lastShoulderSpan: CGFloat = 0.14
+#if DEBUG
+  private var debugInvalidGeometryCount = 0
+  private var debugVirtualHeadIssueCount = 0
+#endif
 
-  init(containerLayer: CALayer) {
+  init(containerLayer: CALayer, lineEndpointAlpha: CGFloat) {
+    self.lineEndpointAlpha = min(0.9, max(0.35, lineEndpointAlpha))
     configure(layer: measuredLineLayer, lineWidth: 3.2, opacity: 1.0)
     configure(layer: inferredLineLayer, lineWidth: 3.2, opacity: 0.4)
     configure(layer: measuredJointLayer, lineWidth: 0, opacity: 1)
@@ -194,7 +210,12 @@ final class SkeletonRenderer {
     avgBodyVelocity: Double,
     trackingState: TrackingContinuityState
   ) -> SkeletonRenderDiagnostics {
-    guard showSkeleton, joints.count >= 3 else {
+    guard showSkeleton,
+          joints.count >= 3,
+          bounds.width.isFinite,
+          bounds.height.isFinite,
+          bounds.width > 0,
+          bounds.height > 0 else {
       hideAndClear()
       return SkeletonRenderDiagnostics(rawToTrackedRmsPx: 0, trackedToSpringRmsPx: 0, inferredRatio: 0, measuredJointCount: 0, inferredJointCount: 0)
     }
@@ -224,6 +245,31 @@ final class SkeletonRenderer {
     let trackedDots = UIBezierPath()
     let springDots = UIBezierPath()
 
+    if let attachment = buildVirtualHeadAttachment(joints: joints, springPositions: springPositions) {
+      let path = attachment.useInferredPath ? inferredLinePath : measuredLinePath
+      let headJointPath = attachment.useInferredPath ? inferredDots : measuredDots
+
+      if let shoulderMidPx = safeConvert(attachment.shoulderMid, in: bounds),
+         let neckPx = safeConvert(attachment.neck, in: bounds),
+         let upperHeadPx = safeConvert(attachment.upperHead, in: bounds) {
+        let bridge = smoothEndpointsForLine(key: "virtual_head_shoulder_bridge", p1: shoulderMidPx, p2: neckPx)
+        addLine(path: path, from: bridge.0, to: bridge.1)
+
+        let crown = smoothEndpointsForLine(key: "virtual_head_crown", p1: neckPx, p2: upperHeadPx)
+        addLine(path: path, from: crown.0, to: crown.1)
+
+        addDot(path: headJointPath, center: neckPx, radius: 2.2)
+        addDot(path: headJointPath, center: upperHeadPx, radius: 2.8)
+      } else {
+#if DEBUG
+        debugInvalidGeometryCount += 1
+        if debugInvalidGeometryCount <= 3 || debugInvalidGeometryCount % 30 == 0 {
+          print("[Pose][SkeletonRenderer] dropped virtual-head segment due to non-finite geometry. count=\(debugInvalidGeometryCount)")
+        }
+#endif
+      }
+    }
+
     for (a, b) in connections {
       guard let ja = joints[a], ja.sourceType != .missing,
             let jb = joints[b], jb.sourceType != .missing,
@@ -231,8 +277,16 @@ final class SkeletonRenderer {
         continue
       }
 
-      let p1 = convert(sa, in: bounds)
-      let p2 = convert(sb, in: bounds)
+      guard let p1 = safeConvert(sa, in: bounds),
+            let p2 = safeConvert(sb, in: bounds) else {
+#if DEBUG
+        debugInvalidGeometryCount += 1
+        if debugInvalidGeometryCount <= 3 || debugInvalidGeometryCount % 40 == 0 {
+          print("[Pose][SkeletonRenderer] skipped non-finite line geometry for \(a.rawValue)-\(b.rawValue). count=\(debugInvalidGeometryCount)")
+        }
+#endif
+        continue
+      }
       let key = "\(a.rawValue)-\(b.rawValue)"
       let smoothedEndpoints = smoothEndpointsForLine(key: key, p1: p1, p2: p2)
       let useInferred = ja.sourceType == .inferred || ja.sourceType == .predicted || jb.sourceType == .inferred || jb.sourceType == .predicted
@@ -245,14 +299,20 @@ final class SkeletonRenderer {
         continue
       }
 
-      let springCenter = convert(springPosition, in: bounds)
+      guard let springCenter = safeConvert(springPosition, in: bounds) else {
+        continue
+      }
       let springRadius: CGFloat = (joint.sourceType == .inferred || joint.sourceType == .predicted) ? 2.2 : 2.9
       let jointPath = (joint.sourceType == .inferred || joint.sourceType == .predicted) ? inferredDots : measuredDots
       addDot(path: jointPath, center: springCenter, radius: springRadius)
 
       if debugMode {
-        addDot(path: rawDots, center: convert(joint.rawPosition, in: bounds), radius: 1.7)
-        addDot(path: trackedDots, center: convert(joint.smoothedPosition, in: bounds), radius: 2.0)
+        if let rawCenter = safeConvert(joint.rawPosition, in: bounds) {
+          addDot(path: rawDots, center: rawCenter, radius: 1.7)
+        }
+        if let trackedCenter = safeConvert(joint.smoothedPosition, in: bounds) {
+          addDot(path: trackedDots, center: trackedCenter, radius: 2.0)
+        }
         addDot(path: springDots, center: springCenter, radius: 2.3)
       }
     }
@@ -318,7 +378,7 @@ final class SkeletonRenderer {
       return (p1, p2)
     }
 
-    let alpha: CGFloat = 0.45
+    let alpha: CGFloat = lineEndpointAlpha
     let smoothed1 = CGPoint(
       x: previous.0.x + (p1.x - previous.0.x) * alpha,
       y: previous.0.y + (p1.y - previous.0.y) * alpha
@@ -388,6 +448,10 @@ final class SkeletonRenderer {
       self.clear()
       self.springAnimator.reset()
       self.lastLineEndpoints.removeAll()
+      self.lastVirtualHeadAttachment = nil
+      self.lastHeadUpDirection = CGVector(dx: 0, dy: 1)
+      self.lastShoulderMid = nil
+      self.lastShoulderSpan = 0.14
     }
     pendingHideWorkItem = work
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
@@ -433,9 +497,11 @@ final class SkeletonRenderer {
 
     for (name, joint) in joints {
       guard let spring = springPositions[name] else { continue }
-      let rawPx = convert(joint.rawPosition, in: bounds)
-      let trackedPx = convert(joint.smoothedPosition, in: bounds)
-      let springPx = convert(spring, in: bounds)
+      guard let rawPx = safeConvert(joint.rawPosition, in: bounds),
+            let trackedPx = safeConvert(joint.smoothedPosition, in: bounds),
+            let springPx = safeConvert(spring, in: bounds) else {
+        continue
+      }
 
       let rawTrackedDx = Double(rawPx.x - trackedPx.x)
       let rawTrackedDy = Double(rawPx.y - trackedPx.y)
@@ -449,6 +515,325 @@ final class SkeletonRenderer {
 
     guard count > 0 else { return (0, 0) }
     return (sqrt(rawTrackedSum / count), sqrt(trackedSpringSum / count))
+  }
+
+  private func buildVirtualHeadAttachment(
+    joints: [PushlyJointName: TrackedJoint],
+    springPositions: [PushlyJointName: CGPoint]
+  ) -> VirtualHeadAttachment? {
+    let leftShoulder = sanitizeCanonicalPoint(springPositions[.leftShoulder])
+    let rightShoulder = sanitizeCanonicalPoint(springPositions[.rightShoulder])
+    let nose = sanitizeCanonicalPoint(springPositions[.nose])
+    let measuredHead = sanitizeCanonicalPoint(springPositions[.head])
+    var usedFallbackGeometry = false
+
+    var shoulderMid: CGPoint?
+    var shoulderSpan = lastShoulderSpan
+    if let leftShoulder, let rightShoulder {
+      let mid = midpoint(leftShoulder, rightShoulder)
+      shoulderMid = mid
+      lastShoulderMid = mid
+      let span = distance(leftShoulder, rightShoulder)
+      if span.isFinite, span > 0.04 {
+        shoulderSpan = min(0.46, max(0.08, span))
+        lastShoulderSpan = shoulderSpan
+      }
+    } else if let fallback = lastShoulderMid {
+      shoulderMid = fallback
+      usedFallbackGeometry = true
+    } else if let leftShoulder {
+      shoulderMid = leftShoulder
+      usedFallbackGeometry = true
+    } else if let rightShoulder {
+      shoulderMid = rightShoulder
+      usedFallbackGeometry = true
+    }
+
+    guard let shoulderMid, isFinitePoint(shoulderMid) else { return nil }
+
+    var upDirection = lastHeadUpDirection
+    if let leftShoulder, let rightShoulder {
+      let shoulders = CGVector(dx: rightShoulder.x - leftShoulder.x, dy: rightShoulder.y - leftShoulder.y)
+      let shoulderAxis = normalize(shoulders)
+      var orthogonal = normalize(CGVector(dx: -shoulderAxis.dy, dy: shoulderAxis.dx))
+
+      if let nose {
+        let toNose = normalize(CGVector(dx: nose.x - shoulderMid.x, dy: nose.y - shoulderMid.y))
+        if dot(orthogonal, toNose) < 0 {
+          orthogonal = orthogonal * -1
+        }
+        orthogonal = normalize(blend(orthogonal, toNose, alpha: 0.3))
+      }
+
+      upDirection = normalize(blend(lastHeadUpDirection, orthogonal, alpha: 0.35))
+    } else if let nose {
+      let toNose = normalize(CGVector(dx: nose.x - shoulderMid.x, dy: nose.y - shoulderMid.y))
+      upDirection = normalize(blend(lastHeadUpDirection, toNose, alpha: 0.22))
+    } else if let measuredHead {
+      let toHead = normalize(CGVector(dx: measuredHead.x - shoulderMid.x, dy: measuredHead.y - shoulderMid.y))
+      upDirection = normalize(blend(lastHeadUpDirection, toHead, alpha: 0.2))
+    }
+    lastHeadUpDirection = upDirection
+
+    let neckLengthFactor: CGFloat = 0.11
+    let headLengthFactor: CGFloat = 0.34
+    let noseLiftFactor: CGFloat = 0.12
+    let neckMinLen: CGFloat = 0.024
+    let neckMaxLen: CGFloat = 0.055
+    let crownMinLen: CGFloat = 0.048
+    let crownMaxLen: CGFloat = 0.118
+    let headSpanMinClampFactor: CGFloat = 0.24
+    let headSpanMaxClampFactor: CGFloat = 0.46
+
+    let neckLength = min(neckMaxLen, max(neckMinLen, shoulderSpan * neckLengthFactor))
+    let crownLength = min(crownMaxLen, max(crownMinLen, shoulderSpan * headLengthFactor))
+    let noseLift = min(0.03, max(0.01, shoulderSpan * noseLiftFactor))
+
+    let crownFromShoulders = clampNormalizedPoint(shoulderMid + upDirection * crownLength)
+    let neckTarget = clampAlongDirection(
+      origin: shoulderMid,
+      candidate: clampNormalizedPoint(shoulderMid + upDirection * neckLength),
+      direction: upDirection,
+      minLength: neckLength * 0.7,
+      maxLength: neckLength * 1.15
+    )
+
+    let upperHeadTarget: CGPoint
+    if let nose {
+      let crownFromNose = clampAlongDirection(
+        origin: shoulderMid,
+        candidate: clampNormalizedPoint(nose + upDirection * noseLift),
+        direction: upDirection,
+        minLength: crownLength * 0.72,
+        maxLength: crownLength * 1.05
+      )
+      upperHeadTarget = blend(crownFromShoulders, crownFromNose, alpha: 0.34)
+    } else if let measuredHead {
+      let conservativeMeasuredHead = clampAlongDirection(
+        origin: shoulderMid,
+        candidate: measuredHead,
+        direction: upDirection,
+        minLength: crownLength * 0.75,
+        maxLength: crownLength * 1.08
+      )
+      upperHeadTarget = blend(crownFromShoulders, conservativeMeasuredHead, alpha: 0.28)
+    } else if let cached = lastVirtualHeadAttachment {
+      let conservativeCached = clampAlongDirection(
+        origin: shoulderMid,
+        candidate: cached.upperHead,
+        direction: upDirection,
+        minLength: crownLength * 0.78,
+        maxLength: crownLength * 1.04
+      )
+      upperHeadTarget = blend(crownFromShoulders, conservativeCached, alpha: 0.22)
+      usedFallbackGeometry = true
+    } else {
+      upperHeadTarget = crownFromShoulders
+    }
+
+    let headMinLen = max(crownMinLen * 0.82, shoulderSpan * headSpanMinClampFactor)
+    let headMaxLen = min(crownMaxLen * 1.08, max(headMinLen + 0.01, shoulderSpan * headSpanMaxClampFactor))
+    let clampedUpperHeadTarget = clampAlongDirection(
+      origin: shoulderMid,
+      candidate: upperHeadTarget,
+      direction: upDirection,
+      minLength: headMinLen,
+      maxLength: headMaxLen
+    )
+
+    let smoothedNeck: CGPoint
+    let smoothedUpperHead: CGPoint
+    if let cached = lastVirtualHeadAttachment {
+      smoothedNeck = blend(cached.neck, neckTarget, alpha: 0.34)
+      smoothedUpperHead = blend(cached.upperHead, clampedUpperHeadTarget, alpha: 0.32)
+    } else {
+      smoothedNeck = neckTarget
+      smoothedUpperHead = clampedUpperHeadTarget
+    }
+
+    let smoothedShoulderMid: CGPoint
+    if let cached = lastVirtualHeadAttachment {
+      smoothedShoulderMid = blend(cached.shoulderMid, shoulderMid, alpha: 0.4)
+    } else {
+      smoothedShoulderMid = shoulderMid
+    }
+
+    guard isFinitePoint(smoothedShoulderMid),
+          isFinitePoint(smoothedNeck),
+          isFinitePoint(smoothedUpperHead) else {
+#if DEBUG
+      debugVirtualHeadIssueCount += 1
+      if debugVirtualHeadIssueCount <= 3 || debugVirtualHeadIssueCount % 20 == 0 {
+        print("[Pose][SkeletonRenderer] virtual-head geometry became non-finite. count=\(debugVirtualHeadIssueCount)")
+      }
+#endif
+      return nil
+    }
+
+    guard validateVirtualHeadGeometry(
+      shoulderMid: smoothedShoulderMid,
+      neck: smoothedNeck,
+      upperHead: smoothedUpperHead,
+      shoulderSpan: shoulderSpan
+    ) else {
+      return nil
+    }
+
+    lastVirtualHeadAttachment = (shoulderMid: smoothedShoulderMid, neck: smoothedNeck, upperHead: smoothedUpperHead)
+
+    let leftType = joints[.leftShoulder]?.sourceType
+    let rightType = joints[.rightShoulder]?.sourceType
+    let noseType = joints[.nose]?.sourceType
+    let headType = joints[.head]?.sourceType
+    let useInferredPath = usedFallbackGeometry || [leftType, rightType, noseType, headType].contains { type in
+      type == .inferred || type == .predicted
+    }
+
+    return VirtualHeadAttachment(
+      shoulderMid: smoothedShoulderMid,
+      neck: smoothedNeck,
+      upperHead: smoothedUpperHead,
+      useInferredPath: useInferredPath
+    )
+  }
+
+  private func midpoint(_ a: CGPoint, _ b: CGPoint) -> CGPoint {
+    CGPoint(x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5)
+  }
+
+  private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
+    hypot(a.x - b.x, a.y - b.y)
+  }
+
+  private func blend(_ a: CGPoint, _ b: CGPoint, alpha: CGFloat) -> CGPoint {
+    CGPoint(
+      x: a.x + (b.x - a.x) * alpha,
+      y: a.y + (b.y - a.y) * alpha
+    )
+  }
+
+  private func blend(_ a: CGVector, _ b: CGVector, alpha: CGFloat) -> CGVector {
+    CGVector(
+      dx: a.dx + (b.dx - a.dx) * alpha,
+      dy: a.dy + (b.dy - a.dy) * alpha
+    )
+  }
+
+  private func normalize(_ vector: CGVector) -> CGVector {
+    let m = hypot(vector.dx, vector.dy)
+    guard m > 0.0001 else { return CGVector(dx: 0, dy: 1) }
+    return CGVector(dx: vector.dx / m, dy: vector.dy / m)
+  }
+
+  private func dot(_ a: CGVector, _ b: CGVector) -> CGFloat {
+    a.dx * b.dx + a.dy * b.dy
+  }
+
+  private func sanitizeCanonicalPoint(_ point: CGPoint?) -> CGPoint? {
+    guard let point, point.x.isFinite, point.y.isFinite else { return nil }
+    return clampNormalizedPoint(point)
+  }
+
+  private func isFinitePoint(_ point: CGPoint) -> Bool {
+    point.x.isFinite && point.y.isFinite
+  }
+
+  private func isFiniteVector(_ vector: CGVector) -> Bool {
+    vector.dx.isFinite && vector.dy.isFinite
+  }
+
+  private func clampNormalizedPoint(_ point: CGPoint) -> CGPoint {
+    let x = point.x.isFinite ? min(1, max(0, point.x)) : 0.5
+    let y = point.y.isFinite ? min(1, max(0, point.y)) : 0.5
+    return CGPoint(x: x, y: y)
+  }
+
+  private func clampAlongDirection(
+    origin: CGPoint,
+    candidate: CGPoint,
+    direction: CGVector,
+    minLength: CGFloat,
+    maxLength: CGFloat
+  ) -> CGPoint {
+    guard isFinitePoint(origin),
+          isFinitePoint(candidate),
+          isFiniteVector(direction),
+          minLength.isFinite,
+          maxLength.isFinite else {
+      return clampNormalizedPoint(origin)
+    }
+    let dir = normalize(direction)
+    guard isFiniteVector(dir) else {
+      return clampNormalizedPoint(origin)
+    }
+    let delta = CGVector(dx: candidate.x - origin.x, dy: candidate.y - origin.y)
+    let projected = dot(delta, dir)
+    let safeMinLength = max(0, minLength)
+    let safeMaxLength = max(safeMinLength, maxLength)
+    let safeProjected = projected.isFinite ? projected : safeMinLength
+    let clamped = min(safeMaxLength, max(safeMinLength, safeProjected))
+    return clampNormalizedPoint(
+      CGPoint(
+        x: origin.x + dir.dx * clamped,
+        y: origin.y + dir.dy * clamped
+      )
+    )
+  }
+
+  private func safeConvert(_ point: CGPoint, in bounds: CGRect) -> CGPoint? {
+    guard bounds.width.isFinite,
+          bounds.height.isFinite,
+          bounds.width > 0,
+          bounds.height > 0,
+          isFinitePoint(point) else {
+      return nil
+    }
+    let converted = convert(clampNormalizedPoint(point), in: bounds)
+    guard isFinitePoint(converted) else {
+      return nil
+    }
+    return converted
+  }
+
+  private func validateVirtualHeadGeometry(
+    shoulderMid: CGPoint,
+    neck: CGPoint,
+    upperHead: CGPoint,
+    shoulderSpan: CGFloat
+  ) -> Bool {
+    guard shoulderSpan.isFinite else {
+      return false
+    }
+    let neckLen = distance(shoulderMid, neck)
+    let headLen = distance(shoulderMid, upperHead)
+    guard neckLen.isFinite, headLen.isFinite else {
+#if DEBUG
+      debugVirtualHeadIssueCount += 1
+      if debugVirtualHeadIssueCount <= 3 || debugVirtualHeadIssueCount % 20 == 0 {
+        print("[Pose][SkeletonRenderer] virtual-head length non-finite. count=\(debugVirtualHeadIssueCount)")
+      }
+#endif
+      return false
+    }
+    let neckHardMax = min(0.075, max(0.032, shoulderSpan * 0.28))
+    let headHardMin = max(0.03, shoulderSpan * 0.16)
+    let headHardMax = min(0.14, max(0.065, shoulderSpan * 0.58))
+
+    let geometryInRange = neckLen <= neckHardMax + 0.006
+      && headLen >= headHardMin - 0.01
+      && headLen <= headHardMax + 0.008
+      && neckLen <= headLen + 0.004
+
+    if !geometryInRange {
+#if DEBUG
+      debugVirtualHeadIssueCount += 1
+      if debugVirtualHeadIssueCount <= 3 || debugVirtualHeadIssueCount % 20 == 0 {
+        print("[Pose][SkeletonRenderer] virtual-head out-of-range; skipping frame. neckLen=\(neckLen) headLen=\(headLen) shoulderSpan=\(shoulderSpan) count=\(debugVirtualHeadIssueCount)")
+      }
+#endif
+      return false
+    }
+    return true
   }
 }
 #endif

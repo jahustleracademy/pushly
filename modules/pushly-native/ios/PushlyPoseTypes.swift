@@ -192,6 +192,11 @@ struct PoseBackendDiagnostics {
   let modeConfidence: Double
   let reliability: Double
   let handRefinedJointCount: Int
+  let segmentationAssistActive: Bool = false
+  let segmentationBottomAssistActive: Bool = false
+  let segmentationPresenceCoverage: Double = 0
+  let tooCloseFallbackActive: Bool = false
+  let tooCloseInferredHipCount: Int = 0
 }
 
 struct ReacquireDiagnostics {
@@ -243,6 +248,7 @@ struct TrackingQuality {
   let trackingQuality: Double
   let renderQuality: Double
   let logicQuality: Double
+  let pushupFloorModeActive: Bool
   let bodyVisibilityState: BodyVisibilityState
   let trackingState: TrackingContinuityState
   let poseTrackingState: BodyState
@@ -265,7 +271,7 @@ struct TrackingQuality {
 struct RepDetectionOutput {
   let state: PushupState
   let repCount: Int
-  let formScore: Double
+  let formEvidenceScore: Double
   let blockedReasons: [String]
 }
 
@@ -357,6 +363,7 @@ final class TrackContinuityManager {
   private(set) var bodyMode: BodyTrackingMode = .unknown
   private(set) var modeConfidence: Double = 0
   private(set) var coverage: PoseVisibilityCoverage = .empty
+  private(set) var pushupFloorModeActive = false
 
   private(set) var lastReacquireSource: ReacquireSource = .none
   private(set) var relockSuccessCount = 0
@@ -366,9 +373,17 @@ final class TrackContinuityManager {
   private var fullStableFrames = 0
   private var fullMissingFrames = 0
   private var missingFrames = 0
+  private var floorModeStableFrames = 0
+  private var floorModeMissingFrames = 0
 
   private var relockStartedAt: TimeInterval?
   private(set) var lastRelockDuration: TimeInterval = 0
+  private var smoothedHintROI: CGRect?
+  private var lockedHintSource: ReacquireSource = .none
+  private var lockedHintSourceFramesLeft = 0
+  private var pendingHintSource: ReacquireSource = .none
+  private var pendingHintSourceFrames = 0
+  private var reacquireWithoutObservationFrames = 0
 
   init(config: PushlyPoseConfig) {
     self.config = config
@@ -379,10 +394,12 @@ final class TrackContinuityManager {
     modeHint: BodyTrackingMode?,
     modeHintConfidence: Double?,
     coverage candidateCoverage: PoseVisibilityCoverage?,
+    segmentationBottomAssistActive: Bool,
     now: TimeInterval,
     reacquire: ReacquireObservation?
   ) {
     coverage = candidateCoverage ?? PoseCoverageCalculator.coverage(measured: measured)
+    updatePushupFloorMode(measured: measured)
 
     let upperCount = measured.keys.filter(\.isUpperBody).count
     let fullCount = measured.count
@@ -448,8 +465,18 @@ final class TrackContinuityManager {
           paddedROI(roi),
           minSize: config.reacquire.roiMinSize
         )
-        lastStableROI = clamped
-        roiCoverage = Double(clamped.width * clamped.height)
+        let smoothedStableROI = smoothROI(
+          current: lastStableROI,
+          target: clamped,
+          alpha: config.reacquire.roiTrackingSmoothingAlpha
+        )
+        lastStableROI = smoothedStableROI
+        smoothedHintROI = smoothROI(
+          current: smoothedHintROI,
+          target: smoothedStableROI,
+          alpha: config.reacquire.roiTrackingSmoothingAlpha
+        )
+        roiCoverage = Double(smoothedStableROI.width * smoothedStableROI.height)
       }
 
       state = poseState.toContinuityState
@@ -459,7 +486,10 @@ final class TrackContinuityManager {
       fullMissingFrames = 0
       missingFrames += 1
 
-      if missingFrames >= config.mode.lostEnterFrames {
+      let lostThreshold = config.mode.lostEnterFrames
+        + (pushupFloorModeActive ? config.mode.pushupFloorLostGraceFrames : 0)
+        + (segmentationBottomAssistActive ? config.mode.segmentationBottomAssistLostGraceFrames : 0)
+      if missingFrames >= lostThreshold {
         poseState = .lost
         state = .lost
         updateRelockState(now: now)
@@ -469,7 +499,7 @@ final class TrackContinuityManager {
         updateRelockState(now: now)
       }
 
-      if coverage.upperBodyCoverage <= config.mode.upperBodyCoverageLost {
+      if coverage.upperBodyCoverage <= config.mode.upperBodyCoverageLost && !segmentationBottomAssistActive {
         bodyMode = .unknown
       }
     }
@@ -493,29 +523,58 @@ final class TrackContinuityManager {
     }
 
     if poseState == .reacquiring || poseState == .lost {
-      if frameIndex % max(1, config.reacquire.fullFrameRefreshCadenceFrames) == 0 {
-        lastReacquireSource = .fullFrame
-        return ROIHintPayload(roi: nil, source: .fullFrame)
-      }
-
       if let reacquire = latestReacquire {
+        reacquireWithoutObservationFrames = 0
         let roi = PoseCoordinateConverter.clampNormalizedROI(
           reacquire.roi,
           minSize: config.reacquire.roiMinSize
         )
-        let source = normalizedReacquireSource(reacquire.source)
+        let source = resolveHintSource(proposed: normalizedReacquireSource(reacquire.source))
         lastReacquireSource = source
-        let roiToUse = roiDebugMode == .roiOnly || roiDebugMode == .adaptive ? roi : nil
+        let smoothedROI = smoothROI(
+          current: smoothedHintROI,
+          target: roi,
+          alpha: config.reacquire.roiReacquireSmoothingAlpha
+        )
+        smoothedHintROI = smoothedROI
+        let roiToUse = roiDebugMode == .roiOnly || roiDebugMode == .adaptive ? smoothedROI : nil
         return ROIHintPayload(roi: roiToUse, source: source)
       }
+
+      reacquireWithoutObservationFrames += 1
+      if reacquireWithoutObservationFrames <= config.reacquire.roiReacquireGraceFrames,
+         let stickyROI = smoothedHintROI ?? lastStableROI {
+        let paddedStickyROI = PoseCoordinateConverter.clampNormalizedROI(
+          paddedROI(stickyROI),
+          minSize: config.reacquire.roiMinSize
+        )
+        let smoothedStickyROI = smoothROI(
+          current: smoothedHintROI,
+          target: paddedStickyROI,
+          alpha: config.reacquire.roiTrackingSmoothingAlpha
+        )
+        smoothedHintROI = smoothedStickyROI
+        lastReacquireSource = .previousTrack
+        return ROIHintPayload(roi: smoothedStickyROI, source: .previousTrack)
+      }
+
+      lastReacquireSource = .fullFrame
+      return ROIHintPayload(roi: nil, source: .fullFrame)
     }
 
+    reacquireWithoutObservationFrames = 0
     if let lastStableROI {
       let roi = PoseCoordinateConverter.clampNormalizedROI(
         paddedROI(lastStableROI),
         minSize: config.reacquire.roiMinSize
       )
-      return ROIHintPayload(roi: roiDebugMode == .fullFrameOnly ? nil : roi, source: .previousTrack)
+      let smoothedROI = smoothROI(
+        current: smoothedHintROI,
+        target: roi,
+        alpha: config.reacquire.roiTrackingSmoothingAlpha
+      )
+      smoothedHintROI = smoothedROI
+      return ROIHintPayload(roi: roiDebugMode == .fullFrameOnly ? nil : smoothedROI, source: .previousTrack)
     }
 
     return ROIHintPayload(roi: nil, source: .none)
@@ -533,8 +592,17 @@ final class TrackContinuityManager {
     relockStartedAt = nil
     lastRelockDuration = 0
     lastReacquireSource = .none
+    smoothedHintROI = nil
+    lockedHintSource = .none
+    lockedHintSourceFramesLeft = 0
+    pendingHintSource = .none
+    pendingHintSourceFrames = 0
+    reacquireWithoutObservationFrames = 0
     bodyMode = .unknown
     coverage = .empty
+    pushupFloorModeActive = false
+    floorModeStableFrames = 0
+    floorModeMissingFrames = 0
     modeConfidence = 0
     relockSuccessCount = 0
     relockFailureCount = 0
@@ -599,6 +667,109 @@ final class TrackContinuityManager {
     )
   }
 
+  private func resolveHintSource(proposed: ReacquireSource) -> ReacquireSource {
+    let normalized = normalizedReacquireSource(proposed)
+    let consistencyFrames = max(1, config.reacquire.roiSourceSwitchConsistencyFrames)
+    let lockFrames = max(0, config.reacquire.roiSourceLockFrames - 1)
+
+    if normalized == lockedHintSource {
+      lockedHintSourceFramesLeft = max(0, lockedHintSourceFramesLeft - 1)
+      pendingHintSource = .none
+      pendingHintSourceFrames = 0
+      return normalized
+    }
+
+    if lockedHintSource != .none, lockedHintSourceFramesLeft > 0 {
+      lockedHintSourceFramesLeft -= 1
+      return lockedHintSource
+    }
+
+    if lockedHintSource == .none {
+      lockedHintSource = normalized
+      lockedHintSourceFramesLeft = lockFrames
+      pendingHintSource = .none
+      pendingHintSourceFrames = 0
+      return normalized
+    }
+
+    if pendingHintSource == normalized {
+      pendingHintSourceFrames += 1
+    } else {
+      pendingHintSource = normalized
+      pendingHintSourceFrames = 1
+    }
+
+    if pendingHintSourceFrames >= consistencyFrames {
+      lockedHintSource = normalized
+      lockedHintSourceFramesLeft = lockFrames
+      pendingHintSource = .none
+      pendingHintSourceFrames = 0
+      return normalized
+    }
+
+    return lockedHintSource
+  }
+
+  private func smoothROI(current: CGRect?, target: CGRect, alpha: CGFloat) -> CGRect {
+    guard let current else { return target }
+    let blend = max(0.05, min(1, alpha))
+    let x = current.minX + (target.minX - current.minX) * blend
+    let y = current.minY + (target.minY - current.minY) * blend
+    let width = current.width + (target.width - current.width) * blend
+    let height = current.height + (target.height - current.height) * blend
+    return PoseCoordinateConverter.clampNormalizedROI(
+      CGRect(x: x, y: y, width: width, height: height),
+      minSize: config.reacquire.roiMinSize
+    )
+  }
+
+  private func updatePushupFloorMode(measured: [PushlyJointName: PoseJointMeasurement]) {
+    let candidate = isLikelyPushupFloorState(measured: measured)
+    if candidate {
+      floorModeStableFrames += 1
+      floorModeMissingFrames = 0
+    } else {
+      floorModeStableFrames = 0
+      floorModeMissingFrames += 1
+    }
+
+    if pushupFloorModeActive {
+      if floorModeMissingFrames >= max(1, config.quality.pushupFloorModeExitFrames) {
+        pushupFloorModeActive = false
+      }
+    } else if floorModeStableFrames >= max(1, config.quality.pushupFloorModeEnterFrames) {
+      pushupFloorModeActive = true
+    }
+  }
+
+  private func isLikelyPushupFloorState(measured: [PushlyJointName: PoseJointMeasurement]) -> Bool {
+    guard let nose = measured[.nose], nose.inFrame, nose.confidence >= 0.1 else {
+      return false
+    }
+    let shoulderMid = midpoint(measured[.leftShoulder]?.point, measured[.rightShoulder]?.point)
+    guard let shoulderMid else {
+      return false
+    }
+    let shoulderSpan = hypot(
+      (measured[.rightShoulder]?.point.x ?? shoulderMid.x) - (measured[.leftShoulder]?.point.x ?? shoulderMid.x),
+      (measured[.rightShoulder]?.point.y ?? shoulderMid.y) - (measured[.leftShoulder]?.point.y ?? shoulderMid.y)
+    )
+    return abs(Double(nose.point.y - shoulderMid.y)) < 0.16 && Double(shoulderSpan) > 0.08
+  }
+
+  private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {
+    switch (a, b) {
+    case let (.some(pa), .some(pb)):
+      return CGPoint(x: (pa.x + pb.x) / 2, y: (pa.y + pb.y) / 2)
+    case let (.some(pa), .none):
+      return pa
+    case let (.none, .some(pb)):
+      return pb
+    default:
+      return nil
+    }
+  }
+
   private func hasUpperBodyCore(measured: [PushlyJointName: PoseJointMeasurement]) -> Bool {
     let hasHeadAnchor = measured[.nose] != nil || measured[.head] != nil
     let hasShoulders = measured[.leftShoulder] != nil && measured[.rightShoulder] != nil
@@ -646,11 +817,25 @@ final class PoseHeuristicsSolver {
       dx: rightShoulder.point.x - leftShoulder.point.x,
       dy: rightShoulder.point.y - leftShoulder.point.y
     )
+    guard leftShoulder.point.x.isFinite,
+          leftShoulder.point.y.isFinite,
+          rightShoulder.point.x.isFinite,
+          rightShoulder.point.y.isFinite,
+          shoulders.dx.isFinite,
+          shoulders.dy.isFinite else {
+      return input
+    }
     let shoulderWidth = max(0.0001, hypot(shoulders.dx, shoulders.dy))
+    guard shoulderWidth.isFinite else {
+      return input
+    }
     let shoulderMid = CGPoint(
       x: (leftShoulder.point.x + rightShoulder.point.x) * 0.5,
       y: (leftShoulder.point.y + rightShoulder.point.y) * 0.5
     )
+    guard shoulderMid.x.isFinite, shoulderMid.y.isFinite else {
+      return input
+    }
 
     if shoulderWidth < 0.08 {
       return joints
@@ -672,6 +857,9 @@ final class PoseHeuristicsSolver {
 
     if let measuredHipCenter = measuredHipCenter(from: joints) {
       let measuredLen = distance(measuredHipCenter, shoulderMid)
+      guard measuredLen.isFinite else {
+        return input
+      }
       let ratio = measuredLen / shoulderWidth
       if ratio.isFinite, ratio > 0.35, ratio < 1.9 {
         state.torsoToShoulderRatioEMA = state.torsoToShoulderRatioEMA * 0.88 + ratio * 0.12
@@ -700,6 +888,9 @@ final class PoseHeuristicsSolver {
         y: shoulderMid.y + torsoDirection.dy * hipDistance
       )
     )
+    guard hipCenter.x.isFinite, hipCenter.y.isFinite else {
+      return joints
+    }
 
     let shoulderAxis = normalize(shoulders)
     let hipHalfSpan = shoulderWidth * 0.42
@@ -715,6 +906,12 @@ final class PoseHeuristicsSolver {
         y: hipCenter.y + shoulderAxis.dy * hipHalfSpan
       )
     )
+    guard inferredLeftHip.x.isFinite,
+          inferredLeftHip.y.isFinite,
+          inferredRightHip.x.isFinite,
+          inferredRightHip.y.isFinite else {
+      return joints
+    }
 
     let shoulderConfidence = min(leftShoulder.confidence, rightShoulder.confidence)
     let inferredConfidence = min(0.72, max(0.28, shoulderConfidence * 0.88))

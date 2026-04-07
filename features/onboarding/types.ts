@@ -93,7 +93,7 @@ export type OnboardingAnswers = {
   pushUpRepCount: number;
   pushUpState: PushUpDetectionState;
   pushUpInstruction: string;
-  pushUpFormScore: number;
+  pushUpFormEvidenceScore: number;
   pushUpTestPassed: boolean;
   authMethod: AuthMethodId;
 };

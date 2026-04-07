@@ -104,7 +104,7 @@ export function useOnboardingFlow() {
     setAnswers((previous) => ({
       ...previous,
       pushUpInstruction: frame.instruction,
-      pushUpFormScore: frame.formScore,
+      pushUpFormEvidenceScore: frame.formEvidenceScore,
       pushUpRepCount: Math.max(previous.pushUpRepCount, frame.repCount),
       pushUpState: frame.state,
       pushUpTestPassed: previous.pushUpTestPassed || frame.repCount >= PUSHLY_TRIAL_REP_TARGET

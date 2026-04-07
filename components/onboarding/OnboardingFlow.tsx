@@ -1182,7 +1182,15 @@ function PushUpTrialStep({
       </Text>
 
       <View style={styles.cameraStage}>
-        <PushlyCameraView isActive showSkeleton repTarget={PUSHLY_TRIAL_REP_TARGET} onPoseFrame={onPoseFrame} style={styles.cameraSurface} />
+        <PushlyCameraView
+          isActive
+          showSkeleton
+          repTarget={PUSHLY_TRIAL_REP_TARGET}
+          poseBackendMode="mediapipe"
+          forceFullFrameProcessing={true}
+          onPoseFrame={onPoseFrame}
+          style={styles.cameraSurface}
+        />
 
         <View style={styles.cameraOverlayRow}>
           <StatusChip
@@ -1193,9 +1201,9 @@ function PushUpTrialStep({
             theme={theme}
           />
           <StatusChip
-            label="Form"
-            value={`${Math.round(answers.pushUpFormScore * 100)}%`}
-            tone={answers.pushUpFormScore > 0.7 ? 'accent' : 'danger'}
+            label="Form + Tracking"
+            value={`${Math.round(answers.pushUpFormEvidenceScore * 100)}%`}
+            tone={answers.pushUpFormEvidenceScore > 0.7 ? 'accent' : 'danger'}
             styles={styles}
             theme={theme}
           />

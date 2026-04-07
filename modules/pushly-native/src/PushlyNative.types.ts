@@ -83,7 +83,7 @@ export type SkeletonJoint = {
 export type PoseFrame = {
   bodyDetected: boolean;
   confidence: number;
-  formScore: number;
+  formEvidenceScore: number;
   instruction: string;
   joints: SkeletonJoint[];
   repCount: number;

@@ -51,7 +51,7 @@ final class JSBridgePayloadMapper {
     var payload: [String: Any] = [
       "bodyDetected": quality.bodyVisibilityState != .notFound,
       "confidence": avgConfidence,
-      "formScore": rep.formScore,
+      "formEvidenceScore": rep.formEvidenceScore,
       "instruction": instruction,
       "joints": payloadJoints,
       "repCount": rep.repCount,

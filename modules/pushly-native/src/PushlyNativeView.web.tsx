@@ -50,7 +50,7 @@ export default function PushlyCameraView({
       const payload: PoseFrame = {
         bodyDetected: true,
         confidence: 0.92,
-        formScore: 87,
+        formEvidenceScore: 87,
         instruction: repCount.current >= repTarget ? 'Stark. Test geschafft.' : 'Web-Demo simuliert die Erkennung.',
         joints: [],
         repCount: repCount.current,

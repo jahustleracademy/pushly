@@ -140,11 +140,14 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
     if let connection = output.connection(with: .video) {
       // MediaPipe must receive native sensor coordinates, never mirrored preview coordinates.
-      configureVideoConnection(connection, isFrontCamera: cameraPosition == .front, shouldMirror: false)
-      connection.isVideoMirrored = false
+      configureVideoConnection(connection, isFrontCamera: cameraPosition == .front)
     }
     if let previewConnection = previewLayer.connection {
-      configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front, shouldMirror: cameraPosition == .front)
+      configureVideoConnection(previewConnection, isFrontCamera: cameraPosition == .front)
+      if previewConnection.isVideoMirroringSupported {
+        // Preview may stay mirrored for front camera UX, independent of data output.
+        previewConnection.isVideoMirrored = cameraPosition == .front
+      }
     }
 
     session.commitConfiguration()
@@ -324,15 +327,14 @@ final class CameraCaptureManager: NSObject, AVCaptureVideoDataOutputSampleBuffer
 
   private func configureVideoConnection(
     _ connection: AVCaptureConnection,
-    isFrontCamera: Bool,
-    shouldMirror: Bool
+    isFrontCamera _: Bool
   ) {
     if connection.isVideoOrientationSupported {
       connection.videoOrientation = .portrait
     }
     if connection.isVideoMirroringSupported {
       connection.automaticallyAdjustsVideoMirroring = false
-      connection.isVideoMirrored = isFrontCamera && shouldMirror
+      connection.isVideoMirrored = false
     }
   }
 

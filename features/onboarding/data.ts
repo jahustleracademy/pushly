@@ -51,7 +51,7 @@ export const DEFAULT_ONBOARDING_ANSWERS: OnboardingAnswers = {
   pushUpRepCount: 0,
   pushUpState: 'idle',
   pushUpInstruction: 'Kalibriere dich im Frame.',
-  pushUpFormScore: 0,
+  pushUpFormEvidenceScore: 0,
   pushUpTestPassed: false,
   authMethod: ''
 };

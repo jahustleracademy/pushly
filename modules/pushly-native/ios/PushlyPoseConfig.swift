@@ -35,6 +35,14 @@ struct PushlyPoseConfig {
     let enableHandRefinement = true
     let handRefinementBlendAlpha: CGFloat = 0.7
     let handRefinementMinConfidence: Float = 0.28
+    let enablePoseSegmentationPresenceAssist = true
+    let poseSegmentationForegroundThreshold: Float = 0.22
+    let poseSegmentationAssistCoverageThreshold: Double = 0.018
+    let poseSegmentationBottomAssistCoverageThreshold: Double = 0.04
+    let poseSegmentationBottomAssistUpperCoverageFloor: Double = 0.27
+    let poseSegmentationSmoothingAlpha: Double = 0.34
+    let poseSegmentationSampleStride: Int = 5
+    let poseSegmentationRelaxedMeasuredMinJoints: Int = 1
   }
 
   struct Mode {
@@ -49,6 +57,8 @@ struct PushlyPoseConfig {
     let fullBodyCoverageEnter: Double = 0.64
     let upperBodyCoverageLost: Double = 0.22
     let fullBodyCoverageLost: Double = 0.44
+    let pushupFloorLostGraceFrames: Int = 6
+    let segmentationBottomAssistLostGraceFrames: Int = 4
   }
 
   struct Tracker {
@@ -68,6 +78,24 @@ struct PushlyPoseConfig {
     let kinematicArmExtensionRatio: CGFloat = 0.92
     let kinematicLowerBodyMaxAge: TimeInterval = 0.9
     let kinematicParentConfidenceMin: Float = 0.16
+    let missingJointPredictionMaxAge: TimeInterval = 0.42
+    let missingJointPredictionMaxExtrapolation: CGFloat = 0.11
+    let missingJointPredictionVelocityDampingPerSecond: Double = 9.5
+    let missingJointPredictionConfidenceDecayPerSecond: Double = 7.5
+    let missingJointPredictionVisibilityDecayPerSecond: Double = 8.4
+    let missingJointRelockMeasurementAlpha: CGFloat = 0.38
+    let torsoFrameSmoothingAlpha: CGFloat = 0.28
+    let torsoOffsetMaxAge: TimeInterval = 0.55
+    let torsoInferenceConfidenceScale: Float = 0.72
+    let torsoSideEvidenceWeight: Double = 0.55
+    let torsoSideLateralMargin: CGFloat = 0.012
+    let sideSwapTooCloseBlockSeconds: TimeInterval = 0.65
+    let sideSwapReacquireBlockSeconds: TimeInterval = 0.42
+    let sideSwapOcclusionBlockSeconds: TimeInterval = 0.28
+    let sideSwapOcclusionMinMeasuredJoints: Int = 6
+    let sideSwapTorsoSupportMinScore: Double = 0.58
+    let sideChainEvidenceWeight: Double = 1.15
+    let sideSwapConsistencyFrames: Int = 5
   }
 
   struct Quality {
@@ -79,6 +107,9 @@ struct PushlyPoseConfig {
     let lowLightLumaThreshold: Double = 0.2
     let veryLowLightLumaThreshold: Double = 0.13
     let minUpperBodyRenderableJoints: Int = 4
+    let pushupFloorModeEnterFrames: Int = 3
+    let pushupFloorModeExitFrames: Int = 6
+    let pushupFloorLogicMin: Double = 0.34
   }
 
   struct Reacquire {
@@ -93,6 +124,11 @@ struct PushlyPoseConfig {
     let enableUpperBodyDetector: Bool = true
     let roiPadding: CGFloat = 0.18
     let roiMinSize: CGFloat = 0.08
+    let roiTrackingSmoothingAlpha: CGFloat = 0.22
+    let roiReacquireSmoothingAlpha: CGFloat = 0.3
+    let roiSourceSwitchConsistencyFrames: Int = 3
+    let roiSourceLockFrames: Int = 4
+    let roiReacquireGraceFrames: Int = 8
   }
 
   struct Camera {
@@ -105,18 +141,45 @@ struct PushlyPoseConfig {
   }
 
   struct Rep {
-    let minLogicQualityToCount: Double = 0.45
-    let minLogicQualityToProgress: Double = 0.32
+    let minLogicQualityToCount: Double = 0.4
+    let minLogicQualityToProgress: Double = 0.28
     let plankLockFrames: Int = 4
     let plankAngleMin: CGFloat = 146
     let descendAngleMax: CGFloat = 126
     let bottomAngleMax: CGFloat = 100
     let ascendAngleMin: CGFloat = 122
     let repCompleteAngleMin: CGFloat = 150
-    let minTorsoStability: Double = 0.32
-    let minMeasuredEvidence: Double = 0.22
+    let minTorsoStability: Double = 0.28
+    let floorMinTorsoStability: Double = 0.24
+    let minMeasuredEvidence: Double = 0.18
+    let floorMinMeasuredEvidence: Double = 0.14
+    let logicGateGraceFrames: Int = 3
+    let descentConfirmFrames: Int = 2
+    let bottomConfirmFrames: Int = 2
+    let ascendingConfirmFrames: Int = 2
+    let minRepAngleTravel: CGFloat = 40
+    let torsoSmoothAlpha: CGFloat = 0.28
+    let torsoVelocityMinForDescent: CGFloat = 0.00062
+    let torsoVelocityMinForAscent: CGFloat = 0.00048
+    let minShoulderHipLineQuality: Double = 0.3
+    let floorMinShoulderHipLineQuality: Double = 0.24
+    let minTorsoDownTravelForBottom: CGFloat = 0.014
+    let minTorsoCycleTravel: CGFloat = 0.022
+    let minTorsoRecoveryTravel: CGFloat = 0.017
+    let maxTorsoTopRecoveryOffset: CGFloat = 0.016
     let shoulderVelocityMinForDescent: CGFloat = 0.0008
     let shoulderVelocityMinForAscent: CGFloat = 0.00055
+    let elbowVelocityMinForDescent: CGFloat = 0.42
+    let elbowVelocityMinForAscent: CGFloat = 0.42
+    let floorElbowVelocityMinForDescent: CGFloat = 0.3
+    let floorElbowVelocityMinForAscent: CGFloat = 0.3
+    let minShoulderDownTravelForBottom: CGFloat = 0.009
+    let minShoulderCycleTravel: CGFloat = 0.013
+    let minShoulderRecoveryTravel: CGFloat = 0.01
+    let bilateralElbowMaxAngleDelta: CGFloat = 36
+    let bottomOcclusionGraceFrames: Int = 3
+    let floorStateNoseShoulderDeltaMax: Double = 0.12
+    let floorStateShoulderHipDeltaMax: Double = 0.2
     let elbowSmoothAlpha: CGFloat = 0.34
     let shoulderSmoothAlpha: CGFloat = 0.3
   }
@@ -124,6 +187,10 @@ struct PushlyPoseConfig {
   struct Pipeline {
     let minEmitInterval: TimeInterval = 0.08
     let maxPoseFps: Double = 30
+    let logicMinJointCount: Int = 3
+    let renderPersistenceMinJointCount: Int = 3
+    let pushupBottomRenderMinJointCount: Int = 4
+    let pushupBottomRenderCoreMinJointCount: Int = 5
     let enablePreprocessingHint: Bool = false
     let debugEnabledByDefault: Bool = false
     let backendPreference: PoseBackendPreference = .auto
@@ -150,6 +217,30 @@ struct PushlyPoseConfig {
     let requiresFullBodyForCurrentSession = false
   }
 
+  struct Smoothing {
+    struct OneEuroBand {
+      let minCutoff: CGFloat
+      let beta: CGFloat
+    }
+
+    // Logic smoothing (TemporalJointTracker)
+    let logicCore = OneEuroBand(minCutoff: 0.006, beta: 4.2)
+    let logicMid = OneEuroBand(minCutoff: 0.009, beta: 4.0)
+    let logicExtremity = OneEuroBand(minCutoff: 0.011, beta: 3.7)
+    let logicDCutoff: CGFloat = 1.0
+    let logicPredictionLeadSeconds: TimeInterval = 0.012
+    let logicLowLightMinCutoffMultiplier: CGFloat = 1.04
+    let logicLowConfidenceMinCutoffMultiplier: CGFloat = 1.06
+    let logicInferredMinCutoffMultiplier: CGFloat = 1.08
+
+    // Render smoothing/persistence (SkeletonRenderer + camera render gate)
+    let renderLineEndpointAlpha: CGFloat = 0.68
+    let renderPersistenceGraceSeconds: TimeInterval = 0.26
+    let pushupBottomRenderGraceSeconds: TimeInterval = 0.62
+    let segmentationBottomAssistRenderGraceSeconds: TimeInterval = 0.28
+    let pushupBottomTemporalResetGraceSeconds: TimeInterval = 0.55
+  }
+
   let mediaPipe = MediaPipe()
   let mode = Mode()
   let tracker = Tracker()
@@ -159,5 +250,6 @@ struct PushlyPoseConfig {
   let rep = Rep()
   let pipeline = Pipeline()
   let instructions = Instructions()
+  let smoothing = Smoothing()
 }
 #endif
