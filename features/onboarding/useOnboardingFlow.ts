@@ -43,7 +43,7 @@ export function useOnboardingFlow() {
         return;
       }
 
-      setAnswers(draft.answers);
+      setAnswers(withResetPushupTrialState(draft.answers));
       setStepIndex(Math.max(0, Math.min(draft.stepIndex, ONBOARDING_STEP_ORDER.length - 1)));
       setHydrated(true);
     });
@@ -64,6 +64,16 @@ export function useOnboardingFlow() {
   }, [answers, hydrated, stepIndex]);
 
   const currentStepId = ONBOARDING_STEP_ORDER[stepIndex];
+
+  useEffect(() => {
+    if (currentStepId === 'pushUpTrial') {
+      return;
+    }
+
+    pushupFallbackCounter.current = initialPushupFallbackCounterState();
+    poseFrameCounter.current = 0;
+    setAnswers((previous) => withResetPushupTrialState(previous));
+  }, [currentStepId]);
 
   useEffect(() => {
     if (currentStepId !== 'protectApps') {
@@ -227,6 +237,29 @@ export function useOnboardingFlow() {
     setScreenTimeSelection,
     setScreenTimeStatus,
     setShieldStatus
+  };
+}
+
+function withResetPushupTrialState(answers: OnboardingAnswers): OnboardingAnswers {
+  const defaultInstruction = DEFAULT_ONBOARDING_ANSWERS.pushUpInstruction;
+  const alreadyReset =
+    answers.pushUpRepCount === 0 &&
+    answers.pushUpState === 'idle' &&
+    answers.pushUpFormEvidenceScore === 0 &&
+    answers.pushUpInstruction === defaultInstruction &&
+    answers.pushUpTestPassed === false;
+
+  if (alreadyReset) {
+    return answers;
+  }
+
+  return {
+    ...answers,
+    pushUpRepCount: 0,
+    pushUpState: 'idle',
+    pushUpInstruction: defaultInstruction,
+    pushUpFormEvidenceScore: 0,
+    pushUpTestPassed: false
   };
 }
 

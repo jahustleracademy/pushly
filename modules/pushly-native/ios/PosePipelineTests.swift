@@ -663,6 +663,37 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
     XCTAssertEqual(output?.repCount, 1)
   }
 
+  func testFrontalCycleCountsWithoutVisibleNoseWhenFloorGeometryIsStable() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 10)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      var joints = makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false)
+      joints.removeValue(forKey: .nose)
+      output = detector.update(joints: joints, quality: quality, repTarget: 10)
+    }
+
+    let cycle: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.3, false),
+      (0.58, 0.62, false),
+      (0.60, 0.94, false),
+      (0.60, 0.96, false),
+      (0.58, 0.7, false),
+      (0.56, 0.38, false),
+      (0.54, 0.04, false),
+      (0.54, 0.02, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in cycle {
+      var joints = makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false)
+      joints.removeValue(forKey: .nose)
+      output = detector.update(joints: joints, quality: quality, repTarget: 10)
+    }
+
+    XCTAssertEqual(output?.repCount, 1)
+  }
+
   func testStartupDescendBridgeCountsFirstRepBeforeFullPlankLock() {
     let config = PushlyPoseConfig()
     let detector = PushupRepDetector(config: config)

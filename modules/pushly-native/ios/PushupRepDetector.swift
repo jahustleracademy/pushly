@@ -248,7 +248,12 @@ final class PushupRepDetector {
     } else {
       torsoUnstableFrames = 0
     }
-    if torsoUnstableFrames > torsoStabilityGraceFrames {
+    let allowFloorCycleTorsoStabilityGrace =
+      floorState &&
+      activeRepCycle &&
+      isRenderableForProgression &&
+      quality.logicQuality >= progressionLogicQualityGate
+    if torsoUnstableFrames > torsoStabilityGraceFrames && !allowFloorCycleTorsoStabilityGrace {
       blockedReasons.append("torso_unstable")
     }
     if signal.shoulderHipLineQuality < minShoulderHipLineQuality {
@@ -1078,12 +1083,10 @@ final class PushupRepDetector {
     joints: [PushlyJointName: TrackedJoint],
     shoulderMid: CGPoint?
   ) -> Bool {
-    guard let nose = joints[.nose], nose.isRenderable else {
-      return false
-    }
     guard let shoulderMid else {
       return false
     }
+
     let hipMid = midpoint(joints[.leftHip]?.smoothedPosition, joints[.rightHip]?.smoothedPosition)
     let shoulderHipDelta: Double
     if let hipMid {
@@ -1091,8 +1094,22 @@ final class PushupRepDetector {
     } else {
       shoulderHipDelta = 0
     }
-    return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < config.rep.floorStateNoseShoulderDeltaMax &&
-      shoulderHipDelta < config.rep.floorStateShoulderHipDeltaMax
+
+    if let nose = joints[.nose], nose.isRenderable {
+      return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < config.rep.floorStateNoseShoulderDeltaMax &&
+        shoulderHipDelta < config.rep.floorStateShoulderHipDeltaMax
+    }
+
+    let shoulderPairVisible = bestPair(joints[.leftShoulder], joints[.rightShoulder]) != nil
+    let hipPairVisible = bestPair(joints[.leftHip], joints[.rightHip]) != nil
+    let armVisible = arm(shoulder: .leftShoulder, elbow: .leftElbow, wrist: .leftWrist, joints: joints) != nil ||
+      arm(shoulder: .rightShoulder, elbow: .rightElbow, wrist: .rightWrist, joints: joints) != nil
+    let shoulderHipAligned =
+      hipPairVisible
+      ? shoulderHipDelta < config.rep.floorStateShoulderHipDeltaMax * 1.15
+      : shoulderPairVisible
+
+    return shoulderPairVisible && armVisible && shoulderHipAligned
   }
 
   private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {

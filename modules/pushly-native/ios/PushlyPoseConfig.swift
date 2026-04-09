@@ -178,8 +178,8 @@ struct PushlyPoseConfig {
     let floorMinShoulderHipLineQuality: Double = 0.2
     let minTorsoDownTravelForBottom: CGFloat = 0.01
     let minTorsoCycleTravel: CGFloat = 0.016
-    let minTorsoRecoveryTravel: CGFloat = 0.012
-    let maxTorsoTopRecoveryOffset: CGFloat = 0.024
+    let minTorsoRecoveryTravel: CGFloat = 0.01
+    let maxTorsoTopRecoveryOffset: CGFloat = 0.03
     let shoulderVelocityMinForDescent: CGFloat = 0.0008
     let shoulderVelocityMinForAscent: CGFloat = 0.00055
     let elbowVelocityMinForDescent: CGFloat = 0.42
