@@ -31,6 +31,7 @@ final class PushlyNativeCameraView: ExpoView {
     didSet {
       cameraManager.setActive(isActive)
       if isActive {
+        resetPushupSessionState()
         diagnostics.beginSession(
           cameraPosition: cameraPosition,
           mirrored: cameraPosition == .front,
@@ -38,6 +39,7 @@ final class PushlyNativeCameraView: ExpoView {
           fallbackAvailable: poseCoordinator.isFallbackAvailable
         )
       } else {
+        resetPushupSessionState()
         diagnostics.endSession(reason: "inactive")
       }
     }
@@ -98,6 +100,7 @@ final class PushlyNativeCameraView: ExpoView {
   private var previousLowLight = false
   private var consecutiveEmptyResults = 0
   private var previousReacquireSource: ReacquireSource = .none
+  private var latestBackendDebugState: PoseBackendDebugState?
 
   private var renderJoints: [PushlyJointName: TrackedJoint] = [:]
   private var renderState: BodyState = .lost
@@ -150,11 +153,12 @@ final class PushlyNativeCameraView: ExpoView {
     feedbackLabel.numberOfLines = 2
     feedbackLabel.textAlignment = .center
     feedbackLabel.text = "Kalibriere dich im Frame"
+    feedbackLabel.isHidden = true
     addSubview(feedbackLabel)
 
     debugLabel.textColor = UIColor(red: 186 / 255, green: 250 / 255, blue: 32 / 255, alpha: 0.95)
     debugLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-    debugLabel.numberOfLines = 12
+    debugLabel.numberOfLines = 16
     debugLabel.textAlignment = .left
     debugLabel.backgroundColor = UIColor.black.withAlphaComponent(0.38)
     debugLabel.layer.cornerRadius = 8
@@ -208,6 +212,27 @@ final class PushlyNativeCameraView: ExpoView {
     cameraManager.onFrame = { [weak self] sampleBuffer in
       self?.handleFrame(sampleBuffer)
     }
+  }
+
+  private func resetPushupSessionState() {
+    repDetector.reset(repCount: 0)
+    continuityTracker.reset()
+    temporalTracker.hardReset()
+    renderJoints = [:]
+    renderState = .lost
+    renderMode = .unknown
+    renderGraceUntil = 0
+    pushupBottomRenderGraceUntil = 0
+    deferredTemporalResetUntil = 0
+    renderGraceActive = false
+    lastRenderableJoints = [:]
+    lastBottomTorsoFrame = nil
+    previousBodyState = .lost
+    previousBodyMode = .unknown
+    previousBackend = nil
+    previousReacquireSource = .none
+    consecutiveEmptyResults = 0
+    frameIndex = 0
   }
 
   private func handleFrame(_ sampleBuffer: CMSampleBuffer) {
@@ -283,6 +308,7 @@ final class PushlyNativeCameraView: ExpoView {
         )
       )
       diagnostics.endSignpost(inferenceSignpost)
+      latestBackendDebugState = poseCoordinator.lastBackendDebugState
       if processed.detectedJointCount == 0 {
         consecutiveEmptyResults += 1
         diagnostics.recordBackendResultEmpty(processed.backend, consecutive: consecutiveEmptyResults)
@@ -351,7 +377,8 @@ final class PushlyNativeCameraView: ExpoView {
         roiHint: continuityTracker.lastStableROI,
         frameTimestamp: now,
         tooCloseFallbackActive: processed.backendDiagnostics.tooCloseFallbackActive,
-        reacquireActive: continuityTracker.state != .tracking
+        reacquireActive: continuityTracker.state != .tracking,
+        pushupFloorModeActive: continuityTracker.pushupFloorModeActive
       )
       diagnostics.endSignpost(smoothingSignpost)
 
@@ -449,9 +476,11 @@ final class PushlyNativeCameraView: ExpoView {
       let avgConfidence = averageConfidence(of: jointsForRender)
       let avgVelocity = averageVelocityMagnitude(of: jointsForRender)
       let qualitySignpost = diagnostics.beginSignpost(.qualityEvaluation)
+      let veryLowLightDetected = processed.brightnessLuma < config.quality.veryLowLightLumaThreshold
       let quality = qualityEvaluator.evaluate(
         joints: jointsForLogic,
         lowLightDetected: processed.lowLightDetected,
+        veryLowLightDetected: veryLowLightDetected,
         trackingState: continuityTracker.state,
         poseState: continuityTracker.poseState,
         poseMode: continuityTracker.bodyMode,
@@ -469,6 +498,9 @@ final class PushlyNativeCameraView: ExpoView {
       let armAnchorAvailable = hasArmAnchor(in: floorRenderJoints.isEmpty ? jointsForRender : floorRenderJoints)
       let bottomRepNotCountedReason: String? = {
         guard bottomPhaseActive, rep.state != .repCounted else { return nil }
+        if let gateReason = rep.repDebug?.countGateBlockReason, !gateReason.isEmpty {
+          return gateReason
+        }
         if !rep.blockedReasons.isEmpty {
           return rep.blockedReasons.joined(separator: ",")
         }
@@ -572,11 +604,13 @@ final class PushlyNativeCameraView: ExpoView {
         rep: rep,
         instruction: latestInstructionText,
         lowLightDetected: processed.lowLightDetected,
-        backend: processed.backend
+        backend: processed.backend,
+        backendDebug: latestBackendDebugState
       )
     } catch {
+      latestBackendDebugState = poseCoordinator.lastBackendDebugState
       diagnostics.recordBackendUnavailable(kind: renderBackend, reason: "process_frame_failed")
-      emitFallbackFrame()
+      emitFallbackFrame(backendDebug: latestBackendDebugState)
     }
   }
 
@@ -591,10 +625,14 @@ final class PushlyNativeCameraView: ExpoView {
     switch poseBackendMode {
     case "vision":
       poseCoordinator.setPreferenceOverride(.vision)
+      poseCoordinator.setFallbackAllowedOverride(nil)
     case "mediapipe", "mlkit":
       poseCoordinator.setPreferenceOverride(.mediapipe)
+      // Prefer MediaPipe, but keep automatic fallback enabled so sessions remain usable.
+      poseCoordinator.setFallbackAllowedOverride(nil)
     default:
       poseCoordinator.setPreferenceOverride(nil)
+      poseCoordinator.setFallbackAllowedOverride(nil)
     }
   }
 
@@ -608,7 +646,7 @@ final class PushlyNativeCameraView: ExpoView {
     return config.pipeline.roiDebugMode
   }
 
-  private func emitFallbackFrame() {
+  private func emitFallbackFrame(backendDebug: PoseBackendDebugState? = nil) {
     continuityTracker.reset()
     temporalTracker.hardReset()
 
@@ -636,9 +674,19 @@ final class PushlyNativeCameraView: ExpoView {
       self.lastBottomTorsoFrame = nil
     }
 
-    let fallbackInstruction = latestLowLight
-      ? "Licht ist niedrig. Dreh dich leicht zur Lichtquelle."
-      : "Erkennung wird vorbereitet."
+    let resolvedBackendDebug = backendDebug ?? poseCoordinator.lastBackendDebugState
+    let mediaPipeDiagnostics = resolvedBackendDebug.mediaPipeDiagnostics
+    let mediapipeInitReason = mediaPipeDiagnostics.mediapipeInitReason
+    let fallbackInstruction: String
+    if resolvedBackendDebug.requestedBackend == .mediapipe, !resolvedBackendDebug.mediapipeAvailable {
+      fallbackInstruction = mediaPipeUnavailableInstruction(reason: mediapipeInitReason)
+    } else if resolvedBackendDebug.requestedBackend == .mediapipe, resolvedBackendDebug.fallbackReason == "primary_error" {
+      fallbackInstruction = "MediaPipe ist fehlgeschlagen. Bitte Kamera neu ausrichten oder App neu starten."
+    } else {
+      fallbackInstruction = latestLowLight
+        ? "Licht ist niedrig. Dreh dich leicht zur Lichtquelle."
+        : "Erkennung wird vorbereitet."
+    }
     latestInstructionText = fallbackInstruction
 
     let now = Date()
@@ -664,7 +712,19 @@ final class PushlyNativeCameraView: ExpoView {
       "logicQuality": 0.0,
       "bodyVisibilityState": BodyVisibilityState.notFound.rawValue,
       "lowLightDetected": latestLowLight,
-      "poseBackend": renderBackend.rawValue,
+      "poseBackend": resolvedBackendDebug.activeBackend.rawValue,
+      "requestedBackend": resolvedBackendDebug.requestedBackend.rawValue,
+      "activeBackend": resolvedBackendDebug.activeBackend.rawValue,
+      "fallbackAllowed": resolvedBackendDebug.fallbackAllowed,
+      "fallbackUsed": resolvedBackendDebug.fallbackUsed,
+      "fallbackReason": resolvedBackendDebug.fallbackReason as Any,
+      "mediapipeAvailable": resolvedBackendDebug.mediapipeAvailable,
+      "compiledWithMediaPipe": mediaPipeDiagnostics.compiledWithMediaPipe,
+      "poseModelFound": mediaPipeDiagnostics.poseModelFound,
+      "poseModelName": mediaPipeDiagnostics.poseModelName as Any,
+      "poseModelPath": mediaPipeDiagnostics.poseModelPath as Any,
+      "poseLandmarkerInitStatus": mediaPipeDiagnostics.poseLandmarkerInitStatus,
+      "mediapipeInitReason": mediapipeInitReason as Any,
       "reacquireSource": ReacquireSource.none.rawValue,
       "visibleJointCount": 0,
       "mirrored": latestMirrored,
@@ -680,13 +740,25 @@ final class PushlyNativeCameraView: ExpoView {
     ])
   }
 
+  private func mediaPipeUnavailableInstruction(reason: String?) -> String {
+    switch reason {
+    case "pose_model_missing":
+      return "MediaPipe-Modell fehlt. Bitte App neu bauen und pose_landmarker_*.task im iOS-Bundle mitliefern."
+    case "mediapipe_tasks_vision_not_compiled":
+      return "MediaPipe-Framework fehlt im iOS-Build. Bitte Pods/Dependencies installieren und die App neu bauen."
+    default:
+      return "MediaPipe-Landmarker konnte nicht starten (\(reason ?? "unknown")). Bitte App neu starten oder iOS-Build neu erstellen."
+    }
+  }
+
   private func emitPoseFrame(
     joints: [PushlyJointName: TrackedJoint],
     quality: TrackingQuality,
     rep: RepDetectionOutput,
     instruction: String,
     lowLightDetected: Bool,
-    backend: PoseBackendKind
+    backend: PoseBackendKind,
+    backendDebug: PoseBackendDebugState? = nil
   ) {
     let now = Date()
     guard now.timeIntervalSince(lastEmit) >= config.pipeline.minEmitInterval else { return }
@@ -707,7 +779,8 @@ final class PushlyNativeCameraView: ExpoView {
       orientation: latestOrientation,
       mirrored: latestMirrored,
       debugSessionID: diagnostics.sessionIdentifier,
-      visibleJointCount: joints.count
+      visibleJointCount: joints.count,
+      backendDebug: backendDebug
     )
 
     updateFeedbackLabel(instruction)
@@ -715,8 +788,9 @@ final class PushlyNativeCameraView: ExpoView {
   }
 
   private func updateFeedbackLabel(_ text: String) {
+    _ = text
     DispatchQueue.main.async {
-      self.feedbackLabel.text = text
+      self.feedbackLabel.isHidden = true
     }
   }
 
@@ -830,9 +904,20 @@ final class PushlyNativeCameraView: ExpoView {
     let dropRate = latestCameraTelemetry?.dropRate ?? 0
     let backlog = latestCameraTelemetry?.processingBacklog ?? 0
     let avgProcessing = latestCameraTelemetry?.averageProcessingMs ?? 0
+    let backendDebug = latestBackendDebugState ?? poseCoordinator.lastBackendDebugState
+    let mediaPipeDiagnostics = backendDebug.mediaPipeDiagnostics
+    let mediaPipeCompiled = mediaPipeDiagnostics.compiledWithMediaPipe ? "yes" : "no"
+    let mediaPipeAvailable = backendDebug.mediapipeAvailable ? "yes" : "no"
+    let fallbackUsed = backendDebug.fallbackUsed ? "yes" : "no"
+    let fallbackReason = backendDebug.fallbackReason ?? "-"
+    let mediapipeInitReason = mediaPipeDiagnostics.mediapipeInitReason ?? "-"
     debugLabel.text = """
     state: \(state.rawValue) mode:\(mode.rawValue)
-    backend: \(renderBackend.rawValue) reacq:\(continuityTracker.lastReacquireSource.rawValue)
+    backend req/act: \(backendDebug.requestedBackend.rawValue)/\(backendDebug.activeBackend.rawValue)
+    backend render/reacq: \(renderBackend.rawValue)/\(continuityTracker.lastReacquireSource.rawValue)
+    mediapipe avail/compiled: \(mediaPipeAvailable)/\(mediaPipeCompiled)
+    fallback used/reason: \(fallbackUsed)/\(fallbackReason)
+    mediapipe init reason: \(mediapipeInitReason)
     joints: \(jointCount) conf:\(String(format: "%.2f", avgConfidence)) vel:\(String(format: "%.3f", avgVelocity))
     rel:\(String(format: "%.2f", renderReliability)) roi:\(String(format: "%.2f", renderRoiCoverage)) low:\(latestLowLight ? 1 : 0)
     cov u/f/h: \(String(format: "%.2f", renderUpperCoverage))/\(String(format: "%.2f", renderFullCoverage))/\(String(format: "%.2f", renderHandCoverage))

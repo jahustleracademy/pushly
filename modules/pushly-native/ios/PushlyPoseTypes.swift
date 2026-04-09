@@ -221,6 +221,25 @@ struct PoseProcessingResult {
   let reacquireDiagnostics: ReacquireDiagnostics
 }
 
+struct PoseBackendDebugState {
+  let requestedBackend: PoseBackendKind
+  let activeBackend: PoseBackendKind
+  let fallbackAllowed: Bool
+  let fallbackUsed: Bool
+  let fallbackReason: String?
+  let mediapipeAvailable: Bool
+  let mediaPipeDiagnostics: MediaPipeAvailabilityDiagnostics
+}
+
+struct MediaPipeAvailabilityDiagnostics {
+  let compiledWithMediaPipe: Bool
+  let poseModelFound: Bool
+  let poseModelName: String?
+  let poseModelPath: String?
+  let poseLandmarkerInitStatus: String
+  let mediapipeInitReason: String?
+}
+
 struct TrackedJoint {
   let name: PushlyJointName
   var rawPosition: CGPoint
@@ -273,6 +292,113 @@ struct RepDetectionOutput {
   let repCount: Int
   let formEvidenceScore: Double
   let blockedReasons: [String]
+  let repDebug: PushupRepDebug?
+
+  init(
+    state: PushupState,
+    repCount: Int,
+    formEvidenceScore: Double,
+    blockedReasons: [String],
+    repDebug: PushupRepDebug? = nil
+  ) {
+    self.state = state
+    self.repCount = repCount
+    self.formEvidenceScore = formEvidenceScore
+    self.blockedReasons = blockedReasons
+    self.repDebug = repDebug
+  }
+}
+
+struct PushupRepDebug {
+  let smoothedElbowAngle: Double
+  let repMinElbowAngle: Double
+  let smoothedTorsoY: Double
+  let smoothedShoulderY: Double
+  let topReferenceTorsoY: Double
+  let topReferenceShoulderY: Double
+  let shoulderVelocity: Double
+  let torsoVelocity: Double
+  let descendingSignal: Bool
+  let ascendingSignal: Bool
+  let shoulderDownTravel: Double
+  let shoulderRecoveryToTop: Double
+  let torsoDownTravel: Double
+  let torsoRecoveryToTop: Double
+  let descendingFrames: Int
+  let bottomFrames: Int
+  let ascendingFrames: Int
+  let bottomReached: Bool
+  let dominantEvidence: Double
+  let measuredEvidence: Double
+  let structuralEvidence: Double
+  let upperBodyEvidence: Double
+  let blockedReasons: [String]
+  let canProgress: Bool
+  let logicBlockedFrames: Int
+  let startupReady: Bool
+  let startupTopEvidence: Int
+  let startupDescendBridgeUsed: Bool
+  let startBlockedReason: String?
+  let repRearmPending: Bool
+  let topRecoveryFrames: Int
+  let cycleCoreReady: Bool
+  let strictCycleReady: Bool
+  let floorFallbackCycleReady: Bool
+  let motionTravelGate: Bool
+  let topRecoveryGate: Bool
+  let torsoSupportReady: Bool
+  let shoulderSupportReady: Bool
+  let countGatePassed: Bool
+  let countGateBlocked: Bool
+  let countGateBlockReason: String?
+  let stateTransitionEvent: String?
+
+  func toDictionary() -> [String: Any] {
+    [
+      "smoothedElbowAngle": smoothedElbowAngle,
+      "repMinElbowAngle": repMinElbowAngle,
+      "smoothedTorsoY": smoothedTorsoY,
+      "smoothedShoulderY": smoothedShoulderY,
+      "topReferenceTorsoY": topReferenceTorsoY,
+      "topReferenceShoulderY": topReferenceShoulderY,
+      "shoulderVelocity": shoulderVelocity,
+      "torsoVelocity": torsoVelocity,
+      "descendingSignal": descendingSignal,
+      "ascendingSignal": ascendingSignal,
+      "shoulderDownTravel": shoulderDownTravel,
+      "shoulderRecoveryToTop": shoulderRecoveryToTop,
+      "torsoDownTravel": torsoDownTravel,
+      "torsoRecoveryToTop": torsoRecoveryToTop,
+      "descendingFrames": descendingFrames,
+      "bottomFrames": bottomFrames,
+      "ascendingFrames": ascendingFrames,
+      "bottomReached": bottomReached,
+      "dominantEvidence": dominantEvidence,
+      "measuredEvidence": measuredEvidence,
+      "structuralEvidence": structuralEvidence,
+      "upperBodyEvidence": upperBodyEvidence,
+      "blockedReasons": blockedReasons,
+      "canProgress": canProgress,
+      "logicBlockedFrames": logicBlockedFrames,
+      "startupReady": startupReady,
+      "startupTopEvidence": startupTopEvidence,
+      "startupDescendBridgeUsed": startupDescendBridgeUsed,
+      "startBlockedReason": startBlockedReason as Any,
+      "repRearmPending": repRearmPending,
+      "topRecoveryFrames": topRecoveryFrames,
+      "cycleCoreReady": cycleCoreReady,
+      "strictCycleReady": strictCycleReady,
+      "floorFallbackCycleReady": floorFallbackCycleReady,
+      "motionTravelGate": motionTravelGate,
+      "topRecoveryGate": topRecoveryGate,
+      "torsoSupportReady": torsoSupportReady,
+      "shoulderSupportReady": shoulderSupportReady,
+      "countGatePassed": countGatePassed,
+      "countGateBlocked": countGateBlocked,
+      "countGateBlockReason": countGateBlockReason as Any,
+      "stateTransitionEvent": stateTransitionEvent as Any
+    ]
+  }
 }
 
 enum PushupState: String {

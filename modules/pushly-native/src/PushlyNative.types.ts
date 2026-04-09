@@ -35,6 +35,13 @@ export type PushUpDetectionState =
 
 export type JointSourceType = 'measured' | 'lowConfidenceMeasured' | 'inferred' | 'predicted' | 'missing';
 export type BodyVisibilityState = 'body_not_found' | 'body_partial' | 'body_assisted' | 'body_good';
+export type MediaPipeInitReason =
+  | 'pose_model_missing'
+  | 'mediapipe_tasks_vision_not_compiled'
+  | 'gpu_init_failed'
+  | 'cpu_init_failed'
+  | 'pose_landmarker_nil_unknown'
+  | string;
 
 // Legacy continuity state.
 export type TrackingContinuityState = 'tracking' | 'reacquire' | 'lost';
@@ -80,6 +87,108 @@ export type SkeletonJoint = {
   inFrame?: boolean;
 };
 
+export type PushupRepDebug = {
+  smoothedElbowAngle?: number;
+  repMinElbowAngle?: number;
+  smoothedTorsoY?: number;
+  smoothedShoulderY?: number;
+  topReferenceTorsoY?: number;
+  topReferenceShoulderY?: number;
+  shoulderVelocity?: number;
+  torsoVelocity?: number;
+  descendingSignal?: boolean;
+  ascendingSignal?: boolean;
+  shoulderDownTravel?: number;
+  shoulderRecoveryToTop?: number;
+  torsoDownTravel?: number;
+  torsoRecoveryToTop?: number;
+  descendingFrames?: number;
+  bottomFrames?: number;
+  ascendingFrames?: number;
+  bottomReached?: boolean;
+  dominantEvidence?: number;
+  measuredEvidence?: number;
+  structuralEvidence?: number;
+  upperBodyEvidence?: number;
+  blockedReasons?: string[];
+  canProgress?: boolean;
+  logicBlockedFrames?: number;
+  startupReady?: boolean;
+  startupTopEvidence?: number;
+  startupDescendBridgeUsed?: boolean;
+  startBlockedReason?: string;
+  repRearmPending?: boolean;
+  topRecoveryFrames?: number;
+  cycleCoreReady?: boolean;
+  strictCycleReady?: boolean;
+  floorFallbackCycleReady?: boolean;
+  motionTravelGate?: boolean;
+  topRecoveryGate?: boolean;
+  torsoSupportReady?: boolean;
+  shoulderSupportReady?: boolean;
+  countGatePassed?: boolean;
+  countGateBlocked?: boolean;
+  countGateBlockReason?: string;
+  stateTransitionEvent?: string;
+};
+
+export type PushupTrialDebug = {
+  requestedBackend?: PoseBackendKind;
+  activeBackend?: PoseBackendKind;
+  fallbackAllowed?: boolean;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  mediapipeAvailable?: boolean;
+  compiledWithMediaPipe?: boolean;
+  poseModelFound?: boolean;
+  poseModelName?: string;
+  poseModelPath?: string;
+  poseLandmarkerInitStatus?: string;
+  mediapipeInitReason?: MediaPipeInitReason;
+  state?: PushUpDetectionState;
+  repCount?: number;
+  repBlockedReasons?: string[];
+  trackingQuality?: number;
+  logicQuality?: number;
+  upperBodyCoverage?: number;
+  wristRetention?: number;
+  smoothedElbowAngle?: number;
+  repMinElbowAngle?: number;
+  smoothedTorsoY?: number;
+  smoothedShoulderY?: number;
+  topReferenceTorsoY?: number;
+  topReferenceShoulderY?: number;
+  descendingSignal?: boolean;
+  ascendingSignal?: boolean;
+  torsoDownTravel?: number;
+  torsoRecoveryToTop?: number;
+  shoulderDownTravel?: number;
+  shoulderRecoveryToTop?: number;
+  bottomReached?: boolean;
+  descendingFrames?: number;
+  bottomFrames?: number;
+  ascendingFrames?: number;
+  canProgress?: boolean;
+  logicBlockedFrames?: number;
+  startupReady?: boolean;
+  startupTopEvidence?: number;
+  startupDescendBridgeUsed?: boolean;
+  startBlockedReason?: string;
+  repRearmPending?: boolean;
+  topRecoveryFrames?: number;
+  cycleCoreReady?: boolean;
+  strictCycleReady?: boolean;
+  floorFallbackCycleReady?: boolean;
+  motionTravelGate?: boolean;
+  topRecoveryGate?: boolean;
+  torsoSupportReady?: boolean;
+  shoulderSupportReady?: boolean;
+  countGatePassed?: boolean;
+  countGateBlocked?: boolean;
+  countGateBlockReason?: string;
+  stateTransitionEvent?: string;
+};
+
 export type PoseFrame = {
   bodyDetected: boolean;
   confidence: number;
@@ -88,6 +197,8 @@ export type PoseFrame = {
   joints: SkeletonJoint[];
   repCount: number;
   state: PushUpDetectionState;
+  repDebug?: PushupRepDebug;
+  pushupDebug?: PushupTrialDebug;
 
   // Legacy continuity state (preserved).
   trackingState?: TrackingContinuityState;
@@ -105,6 +216,18 @@ export type PoseFrame = {
   bodyVisibilityState?: BodyVisibilityState;
   lowLightDetected?: boolean;
   poseBackend?: PoseBackendKind;
+  requestedBackend?: PoseBackendKind;
+  activeBackend?: PoseBackendKind;
+  fallbackAllowed?: boolean;
+  fallbackUsed?: boolean;
+  fallbackReason?: string;
+  mediapipeAvailable?: boolean;
+  compiledWithMediaPipe?: boolean;
+  poseModelFound?: boolean;
+  poseModelName?: string;
+  poseModelPath?: string;
+  poseLandmarkerInitStatus?: string;
+  mediapipeInitReason?: MediaPipeInitReason;
 
   // New mode field; bodyMode kept for compatibility.
   poseMode?: BodyMode;

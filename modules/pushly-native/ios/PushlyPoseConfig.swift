@@ -83,10 +83,18 @@ struct PushlyPoseConfig {
     let missingJointPredictionVelocityDampingPerSecond: Double = 9.5
     let missingJointPredictionConfidenceDecayPerSecond: Double = 7.5
     let missingJointPredictionVisibilityDecayPerSecond: Double = 8.4
+    // Push-up floor mode: hold occluded joints a bit longer but with tighter spatial drift.
+    let pushupMissingJointPredictionMaxAgeScale: Double = 1.35
+    let pushupMissingJointPredictionMaxExtrapolationScale: CGFloat = 0.72
+    let pushupMissingJointPredictionDecayRateScale: Double = 0.74
+    let pushupMissingJointPredictionVelocityDampingRateScale: Double = 1.2
     let missingJointRelockMeasurementAlpha: CGFloat = 0.38
     let torsoFrameSmoothingAlpha: CGFloat = 0.28
     let torsoOffsetMaxAge: TimeInterval = 0.55
+    let pushupTorsoOffsetMaxAgeScale: Double = 1.35
     let torsoInferenceConfidenceScale: Float = 0.72
+    let pushupTorsoInferencePreserveConfidenceMin: Float = 0.16
+    let pushupKinematicLowerBodyMaxAgeScale: Double = 0.72
     let torsoSideEvidenceWeight: Double = 0.55
     let torsoSideLateralMargin: CGFloat = 0.012
     let sideSwapTooCloseBlockSeconds: TimeInterval = 0.65
@@ -104,6 +112,7 @@ struct PushlyPoseConfig {
     let goodThreshold: Double = 0.7
     let pushupLogicMin: Double = 0.46
     let renderMin: Double = 0.26
+    // Scene brightness gates used by backends/evaluator. veryLowLight is a stricter subset of lowLight.
     let lowLightLumaThreshold: Double = 0.2
     let veryLowLightLumaThreshold: Double = 0.13
     let minUpperBodyRenderableJoints: Int = 4
@@ -141,32 +150,36 @@ struct PushlyPoseConfig {
   }
 
   struct Rep {
-    let minLogicQualityToCount: Double = 0.4
-    let minLogicQualityToProgress: Double = 0.28
+    let minLogicQualityToCount: Double = 0.32
+    let minLogicQualityToProgress: Double = 0.24
+    let minTrackingQualityToCount: Double = 0.34
+    let floorMinTrackingQualityToCount: Double = 0.28
     let plankLockFrames: Int = 4
     let plankAngleMin: CGFloat = 146
     let descendAngleMax: CGFloat = 126
     let bottomAngleMax: CGFloat = 100
     let ascendAngleMin: CGFloat = 122
     let repCompleteAngleMin: CGFloat = 150
-    let minTorsoStability: Double = 0.28
-    let floorMinTorsoStability: Double = 0.24
-    let minMeasuredEvidence: Double = 0.18
-    let floorMinMeasuredEvidence: Double = 0.14
-    let logicGateGraceFrames: Int = 3
+    let minTorsoStability: Double = 0.24
+    let floorMinTorsoStability: Double = 0.22
+    let minMeasuredEvidence: Double = 0.14
+    let floorMinMeasuredEvidence: Double = 0.12
+    let logicGateGraceFrames: Int = 5
     let descentConfirmFrames: Int = 2
     let bottomConfirmFrames: Int = 2
     let ascendingConfirmFrames: Int = 2
-    let minRepAngleTravel: CGFloat = 40
+    let minRepAngleTravel: CGFloat = 34
     let torsoSmoothAlpha: CGFloat = 0.28
+    // Detector coordinates use normalized Y where larger means visually higher in frame.
+    // Therefore descent (toward floor) appears as negative Y velocity and ascent as positive.
     let torsoVelocityMinForDescent: CGFloat = 0.00062
     let torsoVelocityMinForAscent: CGFloat = 0.00048
-    let minShoulderHipLineQuality: Double = 0.3
-    let floorMinShoulderHipLineQuality: Double = 0.24
-    let minTorsoDownTravelForBottom: CGFloat = 0.014
-    let minTorsoCycleTravel: CGFloat = 0.022
-    let minTorsoRecoveryTravel: CGFloat = 0.017
-    let maxTorsoTopRecoveryOffset: CGFloat = 0.016
+    let minShoulderHipLineQuality: Double = 0.24
+    let floorMinShoulderHipLineQuality: Double = 0.2
+    let minTorsoDownTravelForBottom: CGFloat = 0.01
+    let minTorsoCycleTravel: CGFloat = 0.016
+    let minTorsoRecoveryTravel: CGFloat = 0.012
+    let maxTorsoTopRecoveryOffset: CGFloat = 0.024
     let shoulderVelocityMinForDescent: CGFloat = 0.0008
     let shoulderVelocityMinForAscent: CGFloat = 0.00055
     let elbowVelocityMinForDescent: CGFloat = 0.42
@@ -176,8 +189,12 @@ struct PushlyPoseConfig {
     let minShoulderDownTravelForBottom: CGFloat = 0.009
     let minShoulderCycleTravel: CGFloat = 0.013
     let minShoulderRecoveryTravel: CGFloat = 0.01
-    let bilateralElbowMaxAngleDelta: CGFloat = 36
-    let bottomOcclusionGraceFrames: Int = 3
+    let bilateralElbowMaxAngleDelta: CGFloat = 42
+    let bottomOcclusionGraceFrames: Int = 8
+    let repRearmConfirmFrames: Int = 2
+    // Startup bridge for the very first rep: allow descent before full plank lock
+    // once a minimal amount of stable top evidence was observed.
+    let startupDescendBridgeMinTopFrames: Int = 2
     let floorStateNoseShoulderDeltaMax: Double = 0.12
     let floorStateShoulderHipDeltaMax: Double = 0.2
     let elbowSmoothAlpha: CGFloat = 0.34
@@ -224,20 +241,22 @@ struct PushlyPoseConfig {
     }
 
     // Logic smoothing (TemporalJointTracker)
-    let logicCore = OneEuroBand(minCutoff: 0.006, beta: 4.2)
-    let logicMid = OneEuroBand(minCutoff: 0.009, beta: 4.0)
-    let logicExtremity = OneEuroBand(minCutoff: 0.011, beta: 3.7)
+    let logicCore = OneEuroBand(minCutoff: 0.008, beta: 4.2)
+    let logicMid = OneEuroBand(minCutoff: 0.011, beta: 4.0)
+    let logicExtremity = OneEuroBand(minCutoff: 0.013, beta: 3.7)
     let logicDCutoff: CGFloat = 1.0
-    let logicPredictionLeadSeconds: TimeInterval = 0.012
+    // Slight look-ahead to compensate perceived latency without increasing persistence.
+    let logicPredictionLeadSeconds: TimeInterval = 0.016
     let logicLowLightMinCutoffMultiplier: CGFloat = 1.04
     let logicLowConfidenceMinCutoffMultiplier: CGFloat = 1.06
     let logicInferredMinCutoffMultiplier: CGFloat = 1.08
 
     // Render smoothing/persistence (SkeletonRenderer + camera render gate)
-    let renderLineEndpointAlpha: CGFloat = 0.68
-    let renderPersistenceGraceSeconds: TimeInterval = 0.26
-    let pushupBottomRenderGraceSeconds: TimeInterval = 0.62
-    let segmentationBottomAssistRenderGraceSeconds: TimeInterval = 0.28
+    // Main visible-lag knobs (renderer responsiveness vs persistence).
+    let renderLineEndpointAlpha: CGFloat = 0.82
+    let renderPersistenceGraceSeconds: TimeInterval = 0.18
+    let pushupBottomRenderGraceSeconds: TimeInterval = 0.46
+    let segmentationBottomAssistRenderGraceSeconds: TimeInterval = 0.16
     let pushupBottomTemporalResetGraceSeconds: TimeInterval = 0.55
   }
 

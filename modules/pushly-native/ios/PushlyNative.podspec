@@ -9,9 +9,9 @@ Pod::Spec.new do |s|
     :ios => '16.0'
   }
   s.source         = { git: '' }
-  s.static_framework = true
 
   s.dependency 'ExpoModulesCore'
+  s.dependency 'MediaPipeTasksCommon'
   s.dependency 'MediaPipeTasksVision'
 
   # Swift/Objective-C compatibility

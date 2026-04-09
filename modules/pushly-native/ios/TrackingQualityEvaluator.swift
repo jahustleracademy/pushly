@@ -15,6 +15,7 @@ final class TrackingQualityEvaluator {
   func evaluate(
     joints: [PushlyJointName: TrackedJoint],
     lowLightDetected: Bool,
+    veryLowLightDetected: Bool = false,
     trackingState: TrackingContinuityState,
     poseState: BodyState,
     poseMode: BodyTrackingMode,
@@ -65,6 +66,9 @@ final class TrackingQualityEvaluator {
     }
     if lowLightDetected {
       reasons.append("low_light")
+      if veryLowLightDetected {
+        reasons.append("very_low_light")
+      }
     }
     if inferredRatio > 0.42 && !pushupFloorState {
       reasons.append("prediction_heavy")
@@ -83,7 +87,23 @@ final class TrackingQualityEvaluator {
       floorStateBonus
     )
 
-    let logicPenalty = lowLightDetected ? (pushupFloorState ? 0.03 : 0.06) : 0
+    // Keep render quality mostly about geometry/coverage, and apply low-light primarily to logic readiness.
+    let baseLowLightPenalty: Double
+    if veryLowLightDetected {
+      baseLowLightPenalty = pushupFloorState ? 0.05 : 0.08
+    } else if lowLightDetected {
+      baseLowLightPenalty = pushupFloorState ? 0.018 : 0.038
+    } else {
+      baseLowLightPenalty = 0
+    }
+    // Strong joint continuity/renderability should soften low-light penalty, but never remove it entirely.
+    let lowLightRobustness = clamp01(
+      0.42 * logicCoverage +
+      0.28 * continuityScore +
+      0.2 * mergedCoverage.upperBodyCoverage +
+      0.1 * wristRetention
+    )
+    let logicPenalty = baseLowLightPenalty * (1 - 0.45 * lowLightRobustness)
     let logicQuality = clamp01(
       0.22 * logicCoverage +
       0.18 * torsoScore +

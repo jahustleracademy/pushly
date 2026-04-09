@@ -29,6 +29,13 @@ final class PushupRepDetector {
   private var floorBaselineTorsoY: CGFloat = 0
   private var hasFloorBaselineTorsoY = false
   private var bottomOcclusionFrames = 0
+  private var repRearmPending = false
+  private var topRecoveryFrames = 0
+  private var ascendingSignalGapFrames = 0
+  private var topRecoveryGateGapFrames = 0
+  private var smoothedTorsoStability: Double = 0.4
+  private var torsoUnstableFrames = 0
+  private var previousStateForDebugEvent: PushupState = .idle
 
   init(config: PushlyPoseConfig) {
     self.config = config
@@ -58,6 +65,13 @@ final class PushupRepDetector {
     floorBaselineTorsoY = 0
     hasFloorBaselineTorsoY = false
     bottomOcclusionFrames = 0
+    repRearmPending = false
+    topRecoveryFrames = 0
+    ascendingSignalGapFrames = 0
+    topRecoveryGateGapFrames = 0
+    smoothedTorsoStability = 0.4
+    torsoUnstableFrames = 0
+    previousStateForDebugEvent = .idle
   }
 
   func update(
@@ -65,6 +79,7 @@ final class PushupRepDetector {
     quality: TrackingQuality,
     repTarget: Int
   ) -> RepDetectionOutput {
+    _ = repTarget
     let signal = computeSignal(joints: joints)
     let floorState = quality.pushupFloorModeActive || signal.pushupFloorState
     let minMeasuredEvidence = floorState ? config.rep.floorMinMeasuredEvidence : config.rep.minMeasuredEvidence
@@ -77,7 +92,63 @@ final class PushupRepDetector {
       plankFrames = 0
       bottomReached = false
       bottomOcclusionFrames = 0
-      return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: ["body_not_found"])
+      repRearmPending = false
+      topRecoveryFrames = 0
+      ascendingSignalGapFrames = 0
+      topRecoveryGateGapFrames = 0
+      smoothedTorsoStability = 0.4
+      torsoUnstableFrames = 0
+      let resolvedBlockedReasons = ["body_not_found"]
+      return RepDetectionOutput(
+        state: state,
+        repCount: repCount,
+        formEvidenceScore: signal.formEvidenceScore,
+        blockedReasons: resolvedBlockedReasons,
+        repDebug: PushupRepDebug(
+          smoothedElbowAngle: Double(smoothedElbowAngle),
+          repMinElbowAngle: Double(repMinElbowAngle),
+          smoothedTorsoY: Double(smoothedTorsoY),
+          smoothedShoulderY: Double(smoothedShoulderY),
+          topReferenceTorsoY: Double(hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY),
+          topReferenceShoulderY: Double(repStartShoulderY),
+          shoulderVelocity: 0,
+          torsoVelocity: 0,
+          descendingSignal: false,
+          ascendingSignal: false,
+          shoulderDownTravel: 0,
+          shoulderRecoveryToTop: 0,
+          torsoDownTravel: 0,
+          torsoRecoveryToTop: 0,
+          descendingFrames: descendingFrames,
+          bottomFrames: bottomFrames,
+          ascendingFrames: ascendingFrames,
+          bottomReached: bottomReached,
+          dominantEvidence: dominantEvidence,
+          measuredEvidence: signal.measuredEvidence,
+          structuralEvidence: signal.structuralEvidence,
+          upperBodyEvidence: signal.upperBodyEvidence,
+          blockedReasons: resolvedBlockedReasons,
+          canProgress: false,
+          logicBlockedFrames: logicBlockedFrames,
+          startupReady: false,
+          startupTopEvidence: plankFrames,
+          startupDescendBridgeUsed: false,
+          startBlockedReason: repCount == 0 ? "body_not_found" : nil,
+          repRearmPending: repRearmPending,
+          topRecoveryFrames: topRecoveryFrames,
+          cycleCoreReady: false,
+          strictCycleReady: false,
+          floorFallbackCycleReady: false,
+          motionTravelGate: false,
+          topRecoveryGate: false,
+          torsoSupportReady: false,
+          shoulderSupportReady: false,
+          countGatePassed: false,
+          countGateBlocked: true,
+          countGateBlockReason: "body_not_found",
+          stateTransitionEvent: consumeStateTransitionEvent(currentState: state)
+        )
+      )
     }
 
     previousSmoothedElbowAngle = smoothedElbowAngle
@@ -107,19 +178,77 @@ final class PushupRepDetector {
     }
 
     let shoulderVelocity = smoothedShoulderY - previousShoulderY
-    let elbowVelocity = smoothedElbowAngle - previousSmoothedElbowAngle
     let torsoVelocity = smoothedTorsoY - previousTorsoY
-    let elbowVelocityMinForDescent = floorState ? config.rep.floorElbowVelocityMinForDescent : config.rep.elbowVelocityMinForDescent
-    let elbowVelocityMinForAscent = floorState ? config.rep.floorElbowVelocityMinForAscent : config.rep.elbowVelocityMinForAscent
+    // Coordinates are normalized in a Cartesian-like frame where larger Y is visually higher.
+    // So a visible downward push-up descent moves shoulders/torso toward smaller Y values.
+    let torsoTopReference = hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY
+    let shoulderTopReference = repStartShoulderY
+    var descendingSignal = false
+    var ascendingSignal = false
+    var torsoDownTravel = max(0, torsoTopReference - repMaxTorsoY)
+    var torsoRecoveryToTop = max(0, smoothedTorsoY - repMaxTorsoY)
+    var shoulderDownTravel = max(0, shoulderTopReference - repMaxShoulderY)
+    var shoulderRecoveryToTop = max(0, smoothedShoulderY - repMaxShoulderY)
+    var cycleCoreReady = false
+    var strictCycleReady = false
+    var floorFallbackCycleReady = false
+    var motionTravelGate = false
+    var topRecoveryGate = false
+    var torsoSupportReady = false
+    var shoulderSupportReady = false
+    var countGatePassed = false
+    var countGateBlocked = false
+    var countGateBlockReason: String?
 
+    let activeRepCycle =
+      bottomReached ||
+      descendingFrames > 0 ||
+      bottomFrames > 0 ||
+      ascendingFrames > 0 ||
+      state == .descending ||
+      state == .ascending
     var blockedReasons: [String] = []
-    if quality.logicQuality < config.rep.minLogicQualityToProgress {
+    // Keep three distinct quality levels:
+    // 1) renderable enough to maintain an active cycle,
+    // 2) progression-quality for cycle continuity,
+    // 3) strict count-quality (kept unchanged below in strictCycleReady/floorFallbackCycleReady).
+    let isLowLightQualityDip = quality.reasonCodes.contains("low_light") || quality.reasonCodes.contains("very_low_light")
+    let isTrackingQualityDip =
+      quality.trackingState != .tracking
+      || quality.bodyVisibilityState == .assisted
+      || quality.bodyVisibilityState == .partial
+    let isRenderableForProgression =
+      quality.renderQuality >= config.quality.renderMin
+      && quality.visibleJointCount >= config.pipeline.logicMinJointCount
+    let progressionLogicQualityGate: Double = {
+      guard activeRepCycle && isRenderableForProgression else { return config.rep.minLogicQualityToProgress }
+      var gate = config.rep.minLogicQualityToProgress - 0.02
+      if isLowLightQualityDip { gate -= 0.02 }
+      if isTrackingQualityDip { gate -= 0.01 }
+      return max(0.2, gate)
+    }()
+    if quality.logicQuality < progressionLogicQualityGate {
       blockedReasons.append("logic_quality_low")
     }
     if dominantEvidence < minMeasuredEvidence {
       blockedReasons.append("measured_evidence_low")
     }
-    if signal.torsoStability < minTorsoStability {
+    let torsoStabilityAlpha = floorState ? 0.24 : 0.2
+    smoothedTorsoStability = smoothedTorsoStability * (1 - torsoStabilityAlpha) + signal.torsoStability * torsoStabilityAlpha
+    let torsoStabilityForGate = max(signal.torsoStability, smoothedTorsoStability - 0.02)
+    let torsoCycleGateRelief = (activeRepCycle && isRenderableForProgression && isLowLightQualityDip) ? 0.005 : 0
+    let torsoStabilityGate = (floorState && activeRepCycle)
+      ? max(0.2, minTorsoStability - 0.015 - torsoCycleGateRelief)
+      : minTorsoStability
+    let torsoStabilityGraceFrames = activeRepCycle
+      ? max(2, config.rep.ascendingConfirmFrames + 1) + (((isLowLightQualityDip || isTrackingQualityDip) && isRenderableForProgression) ? 1 : 0)
+      : 1
+    if torsoStabilityForGate < torsoStabilityGate {
+      torsoUnstableFrames += 1
+    } else {
+      torsoUnstableFrames = 0
+    }
+    if torsoUnstableFrames > torsoStabilityGraceFrames {
       blockedReasons.append("torso_unstable")
     }
     if signal.shoulderHipLineQuality < minShoulderHipLineQuality {
@@ -131,9 +260,6 @@ final class PushupRepDetector {
     if floorState && blockedReasons.contains("measured_evidence_low") {
       blockedReasons.removeAll { $0 == "measured_evidence_low" }
     }
-    if floorState && blockedReasons.contains("torso_unstable") && signal.torsoStability >= 0.26 {
-      blockedReasons.removeAll { $0 == "torso_unstable" }
-    }
     if floorState && blockedReasons.contains("shoulder_hip_line_weak") && signal.shoulderHipLineQuality >= 0.32 {
       blockedReasons.removeAll { $0 == "shoulder_hip_line_weak" }
     }
@@ -143,7 +269,12 @@ final class PushupRepDetector {
     } else {
       logicBlockedFrames += 1
     }
-    let canProgress = logicReady || logicBlockedFrames <= config.rep.logicGateGraceFrames
+    let progressionGraceBoostFrames = (activeRepCycle && isRenderableForProgression && (isLowLightQualityDip || isTrackingQualityDip)) ? 2 : 0
+    let progressionLogicGraceFrames = config.rep.logicGateGraceFrames + progressionGraceBoostFrames
+    let canProgress = logicReady || logicBlockedFrames <= progressionLogicGraceFrames
+    let ascendingSignalGraceFrames = max(1, config.rep.ascendingConfirmFrames - 1)
+    let topRecoveryGateGraceFrames = max(1, config.rep.repRearmConfirmFrames)
+    var startupDescendBridgeUsed = false
 
     if !canProgress {
       if quality.renderQuality >= config.quality.renderMin {
@@ -151,11 +282,89 @@ final class PushupRepDetector {
       } else {
         state = .lostTracking
       }
-      descendingFrames = 0
-      bottomFrames = 0
-      ascendingFrames = 0
-      bottomOcclusionFrames = 0
-      return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: blockedReasons)
+
+      // Avoid destroying an already valid cycle on short logic dips.
+      // Keep only a tiny hold window, then decay aggressively to prevent stale/noise-driven counts.
+      let blockedOverrun = max(0, logicBlockedFrames - progressionLogicGraceFrames)
+      let shortHoldWindow = max(1, config.rep.ascendingConfirmFrames)
+      let severeDecayStep = state == .lostTracking ? 3 : 2
+      let mildDecayStep = 1
+      let decayStep = blockedOverrun <= shortHoldWindow ? mildDecayStep : severeDecayStep
+
+      descendingFrames = max(0, descendingFrames - decayStep)
+      bottomFrames = max(0, bottomFrames - decayStep)
+      if bottomReached && ascendingFrames > 0 && blockedOverrun <= shortHoldWindow {
+        ascendingSignalGapFrames = min(ascendingSignalGapFrames + 1, ascendingSignalGraceFrames)
+      } else {
+        ascendingFrames = max(0, ascendingFrames - decayStep)
+        if ascendingFrames == 0 {
+          ascendingSignalGapFrames = 0
+        }
+      }
+
+      if repRearmPending {
+        topRecoveryGateGapFrames += 1
+        if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
+          topRecoveryFrames = max(0, topRecoveryFrames - 1)
+        }
+      } else {
+        topRecoveryFrames = 0
+        topRecoveryGateGapFrames = 0
+      }
+
+      if bottomReached {
+        bottomOcclusionFrames += 1
+        let noProgressFramesLeft = descendingFrames == 0 && bottomFrames == 0 && ascendingFrames == 0
+        let occlusionExpired = bottomOcclusionFrames > config.rep.bottomOcclusionGraceFrames
+        if noProgressFramesLeft || occlusionExpired {
+          bottomReached = false
+          bottomOcclusionFrames = 0
+        }
+      } else {
+        bottomOcclusionFrames = 0
+      }
+
+      return RepDetectionOutput(
+        state: state,
+        repCount: repCount,
+        formEvidenceScore: signal.formEvidenceScore,
+        blockedReasons: blockedReasons,
+        repDebug: makeRepDebug(
+          blockedReasons: blockedReasons,
+          dominantEvidence: dominantEvidence,
+          measuredEvidence: signal.measuredEvidence,
+          structuralEvidence: signal.structuralEvidence,
+          upperBodyEvidence: signal.upperBodyEvidence,
+          shoulderVelocity: shoulderVelocity,
+          torsoVelocity: torsoVelocity,
+          topReferenceTorsoY: torsoTopReference,
+          topReferenceShoulderY: shoulderTopReference,
+          descendingSignal: descendingSignal,
+          ascendingSignal: ascendingSignal,
+          shoulderDownTravel: shoulderDownTravel,
+          shoulderRecoveryToTop: shoulderRecoveryToTop,
+          torsoDownTravel: torsoDownTravel,
+          torsoRecoveryToTop: torsoRecoveryToTop,
+          canProgress: canProgress,
+          logicBlockedFrames: logicBlockedFrames,
+          startupReady: isStartupReady(),
+          startupTopEvidence: plankFrames,
+          startupDescendBridgeUsed: startupDescendBridgeUsed,
+          startBlockedReason: startupBlockedReason(),
+          repRearmPending: repRearmPending,
+          topRecoveryFrames: topRecoveryFrames,
+          cycleCoreReady: cycleCoreReady,
+          strictCycleReady: strictCycleReady,
+          floorFallbackCycleReady: floorFallbackCycleReady,
+          motionTravelGate: motionTravelGate,
+          topRecoveryGate: topRecoveryGate,
+          torsoSupportReady: torsoSupportReady,
+          shoulderSupportReady: shoulderSupportReady,
+          countGatePassed: false,
+          countGateBlocked: true,
+          countGateBlockReason: "logic_gate_blocked"
+        )
+      )
     }
 
     if signal.hasElbowMeasurement, smoothedElbowAngle > config.rep.plankAngleMin, signal.torsoStability > minTorsoStability {
@@ -179,34 +388,40 @@ final class PushupRepDetector {
           hasFloorBaselineTorsoY = true
         }
       }
+      if repRearmPending {
+        topRecoveryFrames += 1
+        if topRecoveryFrames >= config.rep.repRearmConfirmFrames {
+          repRearmPending = false
+          topRecoveryFrames = 0
+        }
+      } else {
+        topRecoveryFrames = 0
+      }
       if plankFrames >= config.rep.plankLockFrames {
         state = .plankLocked
       } else {
         state = .bodyFound
       }
-    } else if state == .plankLocked || state == .descending || state == .ascending || bottomReached {
-      let descendingByShoulder = shoulderVelocity > config.rep.shoulderVelocityMinForDescent
-      let ascendingByShoulder = shoulderVelocity < -config.rep.shoulderVelocityMinForAscent
-      let descendingByElbow = signal.hasElbowMeasurement && elbowVelocity < -elbowVelocityMinForDescent
-      let ascendingByElbow = signal.hasElbowMeasurement && elbowVelocity > elbowVelocityMinForAscent
-      let descendingByTorso = torsoVelocity > config.rep.torsoVelocityMinForDescent
-      let ascendingByTorso = torsoVelocity < -config.rep.torsoVelocityMinForAscent
+    } else if state == .plankLocked
+      || state == .descending
+      || state == .ascending
+      || bottomReached
+      || (repCount == 0 && state == .bodyFound && plankFrames >= config.rep.startupDescendBridgeMinTopFrames)
+    {
+      if repCount == 0 && state == .bodyFound && plankFrames >= config.rep.startupDescendBridgeMinTopFrames {
+        startupDescendBridgeUsed = true
+      }
+      let descendingByShoulder = shoulderVelocity < -config.rep.shoulderVelocityMinForDescent
+      let ascendingByShoulder = shoulderVelocity > config.rep.shoulderVelocityMinForAscent
+      let descendingByTorso = torsoVelocity < -config.rep.torsoVelocityMinForDescent
+      let ascendingByTorso = torsoVelocity > config.rep.torsoVelocityMinForAscent
       // Primary progression depends on torso/shoulder motion for frontal stability.
-      let descendingSignal = descendingByTorso || descendingByShoulder
-      let ascendingSignal = ascendingByTorso || ascendingByShoulder
-      let torsoTopReference = hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY
-      let torsoDownTravel = max(0, repMaxTorsoY - torsoTopReference)
-      let torsoRecoveryToTop = max(0, repMaxTorsoY - smoothedTorsoY)
-      let shoulderDownTravel = max(0, repMaxShoulderY - repStartShoulderY)
-      let shoulderRecoveryToTop = max(0, repMaxShoulderY - smoothedShoulderY)
-      let elbowAtDescent = signal.hasElbowMeasurement && smoothedElbowAngle < config.rep.descendAngleMax
+      descendingSignal = descendingByTorso || descendingByShoulder
+      ascendingSignal = ascendingByTorso || ascendingByShoulder
       let elbowAtBottom = signal.hasElbowMeasurement && smoothedElbowAngle < config.rep.bottomAngleMax
-      let elbowAtAscent = signal.hasElbowMeasurement && smoothedElbowAngle > config.rep.ascendAngleMin
       let allowBottomOcclusion = bottomReached && bottomOcclusionFrames <= config.rep.bottomOcclusionGraceFrames
-      let elbowSecondaryDescentConfirm = elbowAtDescent || descendingByElbow
-      let elbowSecondaryAscendConfirm = elbowAtAscent || ascendingByElbow || allowBottomOcclusion
 
-      if descendingSignal && elbowSecondaryDescentConfirm {
+      if descendingSignal {
         if descendingFrames == 0 {
           repStartElbowAngle = max(previousSmoothedElbowAngle, smoothedElbowAngle)
           repMinElbowAngle = smoothedElbowAngle
@@ -219,8 +434,10 @@ final class PushupRepDetector {
         if signal.hasElbowMeasurement {
           repMinElbowAngle = min(repMinElbowAngle, smoothedElbowAngle)
         }
-        repMaxShoulderY = max(repMaxShoulderY, smoothedShoulderY)
-        repMaxTorsoY = max(repMaxTorsoY, smoothedTorsoY)
+        // Historical names kept for compatibility: repMax* now track the deepest point,
+        // which is the minimum Y reached during descent in this coordinate space.
+        repMaxShoulderY = min(repMaxShoulderY, smoothedShoulderY)
+        repMaxTorsoY = min(repMaxTorsoY, smoothedTorsoY)
         if descendingFrames >= config.rep.descentConfirmFrames {
           state = .descending
         }
@@ -228,18 +445,28 @@ final class PushupRepDetector {
         descendingFrames = max(0, descendingFrames - 1)
       }
 
-      if elbowAtBottom || allowBottomOcclusion {
+      torsoDownTravel = max(0, torsoTopReference - repMaxTorsoY)
+      torsoRecoveryToTop = max(0, smoothedTorsoY - repMaxTorsoY)
+      shoulderDownTravel = max(0, shoulderTopReference - repMaxShoulderY)
+      shoulderRecoveryToTop = max(0, smoothedShoulderY - repMaxShoulderY)
+      let bottomTravelReached =
+        (
+          torsoDownTravel >= config.rep.minTorsoDownTravelForBottom
+            || shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom
+        )
+      let descentConfirmed = state == .descending || descendingFrames >= config.rep.descentConfirmFrames
+      let motionBottomCandidate = descentConfirmed && bottomTravelReached
+
+      if elbowAtBottom || allowBottomOcclusion || motionBottomCandidate {
         if descendingSignal || state == .descending || bottomReached {
           bottomFrames += 1
         }
         if signal.hasElbowMeasurement {
           repMinElbowAngle = min(repMinElbowAngle, smoothedElbowAngle)
         }
-        repMaxShoulderY = max(repMaxShoulderY, smoothedShoulderY)
-        repMaxTorsoY = max(repMaxTorsoY, smoothedTorsoY)
-        if bottomFrames >= config.rep.bottomConfirmFrames &&
-          torsoDownTravel >= config.rep.minTorsoDownTravelForBottom &&
-          shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom {
+        repMaxShoulderY = min(repMaxShoulderY, smoothedShoulderY)
+        repMaxTorsoY = min(repMaxTorsoY, smoothedTorsoY)
+        if bottomFrames >= config.rep.bottomConfirmFrames && bottomTravelReached {
           state = .bottomReached
           bottomReached = true
         }
@@ -247,30 +474,103 @@ final class PushupRepDetector {
         bottomFrames = max(0, bottomFrames - 1)
       }
 
-      if bottomReached && elbowSecondaryAscendConfirm && ascendingSignal {
+      if bottomReached && ascendingSignal {
+        ascendingSignalGapFrames = 0
         ascendingFrames += 1
         if ascendingFrames >= config.rep.ascendingConfirmFrames {
           state = .ascending
         }
       } else if bottomReached {
-        ascendingFrames = max(0, ascendingFrames - 1)
+        ascendingSignalGapFrames += 1
+        if ascendingSignalGapFrames > ascendingSignalGraceFrames {
+          ascendingFrames = max(0, ascendingFrames - 1)
+        }
+      } else {
+        ascendingSignalGapFrames = 0
       }
 
       let repTravel = max(0, repStartElbowAngle - repMinElbowAngle)
       let elbowComplete = signal.hasElbowMeasurement && smoothedElbowAngle > config.rep.repCompleteAngleMin
-      if bottomReached && elbowComplete &&
+      let elbowSecondaryReady =
+        !signal.hasElbowMeasurement ||
+        elbowComplete ||
+        repTravel >= config.rep.minRepAngleTravel * 0.55 ||
+        repMinElbowAngle < config.rep.bottomAngleMax + 8
+      cycleCoreReady =
+        bottomReached &&
         ascendingFrames >= config.rep.ascendingConfirmFrames &&
-        repMinElbowAngle < config.rep.bottomAngleMax &&
-        repTravel >= config.rep.minRepAngleTravel &&
+        (
+          torsoDownTravel >= config.rep.minTorsoDownTravelForBottom
+            || shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom
+        )
+      let trackingQualityGate = floorState ? config.rep.floorMinTrackingQualityToCount : config.rep.minTrackingQualityToCount
+      let evidenceGate = floorState ? config.rep.floorMinMeasuredEvidence : config.rep.minMeasuredEvidence
+      let torsoCycleReady =
         torsoDownTravel >= config.rep.minTorsoCycleTravel &&
-        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel &&
+        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel
+      let shoulderCycleReady =
         shoulderDownTravel >= config.rep.minShoulderCycleTravel &&
-        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel &&
-        smoothedTorsoY <= torsoTopReference + config.rep.maxTorsoTopRecoveryOffset &&
-        quality.logicQuality >= config.rep.minLogicQualityToCount &&
-        dominantEvidence >= minMeasuredEvidence &&
+        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel
+      torsoSupportReady =
+        shoulderDownTravel >= config.rep.minShoulderCycleTravel * 0.6 &&
+        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel * 0.6
+      shoulderSupportReady =
+        torsoDownTravel >= config.rep.minTorsoCycleTravel * 0.6 &&
+        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel * 0.6
+      motionTravelGate =
+        (torsoCycleReady && torsoSupportReady) ||
+        (shoulderCycleReady && shoulderSupportReady)
+      topRecoveryGate = smoothedTorsoY >= torsoTopReference - config.rep.maxTorsoTopRecoveryOffset
+      let qualityGate = quality.logicQuality >= config.rep.minLogicQualityToCount
+      let trackingGate = quality.trackingQuality >= trackingQualityGate
+      let evidenceReady = dominantEvidence >= evidenceGate && signal.measuredEvidence >= evidenceGate * 0.85
+      strictCycleReady =
+        cycleCoreReady &&
+        motionTravelGate &&
+        topRecoveryGate &&
+        qualityGate &&
+        trackingGate &&
+        evidenceReady &&
         signal.torsoStability >= minTorsoStability &&
-        signal.shoulderHipLineQuality >= minShoulderHipLineQuality {
+        signal.shoulderHipLineQuality >= minShoulderHipLineQuality
+      floorFallbackCycleReady =
+        floorState &&
+        cycleCoreReady &&
+        descendingFrames >= config.rep.descentConfirmFrames &&
+        quality.logicQuality >= config.rep.minLogicQualityToProgress &&
+        quality.trackingQuality >= trackingQualityGate * 0.9 &&
+        dominantEvidence >= config.rep.floorMinMeasuredEvidence * 0.85 &&
+        signal.measuredEvidence >= config.rep.floorMinMeasuredEvidence * 0.8 &&
+        signal.torsoStability >= config.rep.floorMinTorsoStability * 0.9 &&
+        signal.shoulderHipLineQuality >= config.rep.floorMinShoulderHipLineQuality * 0.85 &&
+        (
+          torsoCycleReady ||
+          shoulderCycleReady ||
+          (torsoSupportReady && shoulderSupportReady)
+        )
+
+      if repRearmPending {
+        if topRecoveryGate && !descendingSignal {
+          topRecoveryGateGapFrames = 0
+          topRecoveryFrames += 1
+          if topRecoveryFrames >= config.rep.repRearmConfirmFrames {
+            repRearmPending = false
+            topRecoveryFrames = 0
+            topRecoveryGateGapFrames = 0
+          }
+        } else {
+          topRecoveryGateGapFrames += 1
+          if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
+            topRecoveryFrames = max(0, topRecoveryFrames - 1)
+          }
+        }
+      } else {
+        topRecoveryFrames = 0
+        topRecoveryGateGapFrames = 0
+      }
+
+      countGatePassed = !repRearmPending && (strictCycleReady || floorFallbackCycleReady)
+      if countGatePassed {
         repCount += 1
         state = .repCounted
         bottomReached = false
@@ -285,12 +585,48 @@ final class PushupRepDetector {
         repStartTorsoY = smoothedTorsoY
         repMaxTorsoY = smoothedTorsoY
         bottomOcclusionFrames = 0
+        repRearmPending = true
+        topRecoveryFrames = 0
+        ascendingSignalGapFrames = 0
+        topRecoveryGateGapFrames = 0
         if floorState {
           if hasFloorBaselineTorsoY {
             floorBaselineTorsoY = floorBaselineTorsoY * 0.8 + smoothedTorsoY * 0.2
           } else {
             floorBaselineTorsoY = smoothedTorsoY
             hasFloorBaselineTorsoY = true
+          }
+        }
+      } else if strictCycleReady && !elbowSecondaryReady {
+        blockedReasons.append("elbow_secondary_unconfirmed")
+      }
+
+      if !countGatePassed {
+        let gateReason = makeCountGateBlockReason(
+          repRearmPending: repRearmPending,
+          bottomReached: bottomReached,
+          ascendingFrames: ascendingFrames,
+          torsoDownTravel: torsoDownTravel,
+          torsoRecoveryToTop: torsoRecoveryToTop,
+          shoulderDownTravel: shoulderDownTravel,
+          shoulderRecoveryToTop: shoulderRecoveryToTop,
+          logicQuality: quality.logicQuality,
+          trackingQuality: quality.trackingQuality,
+          dominantEvidence: dominantEvidence,
+          measuredEvidence: signal.measuredEvidence,
+          evidenceGate: evidenceGate,
+          trackingQualityGate: trackingQualityGate,
+          cycleCoreReady: cycleCoreReady,
+          strictCycleReady: strictCycleReady,
+          floorFallbackCycleReady: floorFallbackCycleReady,
+          motionTravelGate: motionTravelGate,
+          topRecoveryGate: topRecoveryGate
+        )
+        if gateReason != "gate_not_applicable" {
+          countGateBlocked = true
+          countGateBlockReason = gateReason
+          if !blockedReasons.contains(gateReason) {
+            blockedReasons.append(gateReason)
           }
         }
       }
@@ -302,14 +638,204 @@ final class PushupRepDetector {
       if !bottomReached {
         bottomOcclusionFrames = 0
       }
+      if repRearmPending {
+        topRecoveryGateGapFrames += 1
+        if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
+          topRecoveryFrames = max(0, topRecoveryFrames - 1)
+        }
+      } else {
+        topRecoveryFrames = 0
+        topRecoveryGateGapFrames = 0
+      }
+      ascendingSignalGapFrames = 0
       state = .bodyFound
     }
 
-    if repCount >= repTarget {
-      state = .repCounted
-    }
+    return RepDetectionOutput(
+      state: state,
+      repCount: repCount,
+      formEvidenceScore: signal.formEvidenceScore,
+      blockedReasons: blockedReasons,
+      repDebug: makeRepDebug(
+        blockedReasons: blockedReasons,
+        dominantEvidence: dominantEvidence,
+        measuredEvidence: signal.measuredEvidence,
+        structuralEvidence: signal.structuralEvidence,
+        upperBodyEvidence: signal.upperBodyEvidence,
+        shoulderVelocity: shoulderVelocity,
+        torsoVelocity: torsoVelocity,
+        topReferenceTorsoY: torsoTopReference,
+        topReferenceShoulderY: shoulderTopReference,
+        descendingSignal: descendingSignal,
+        ascendingSignal: ascendingSignal,
+        shoulderDownTravel: shoulderDownTravel,
+        shoulderRecoveryToTop: shoulderRecoveryToTop,
+        torsoDownTravel: torsoDownTravel,
+        torsoRecoveryToTop: torsoRecoveryToTop,
+        canProgress: canProgress,
+        logicBlockedFrames: logicBlockedFrames,
+        startupReady: isStartupReady(),
+        startupTopEvidence: plankFrames,
+        startupDescendBridgeUsed: startupDescendBridgeUsed,
+        startBlockedReason: startupBlockedReason(),
+        repRearmPending: repRearmPending,
+        topRecoveryFrames: topRecoveryFrames,
+        cycleCoreReady: cycleCoreReady,
+        strictCycleReady: strictCycleReady,
+        floorFallbackCycleReady: floorFallbackCycleReady,
+        motionTravelGate: motionTravelGate,
+        topRecoveryGate: topRecoveryGate,
+        torsoSupportReady: torsoSupportReady,
+        shoulderSupportReady: shoulderSupportReady,
+        countGatePassed: countGatePassed,
+        countGateBlocked: countGateBlocked,
+        countGateBlockReason: countGateBlockReason
+      )
+    )
+  }
 
-    return RepDetectionOutput(state: state, repCount: repCount, formEvidenceScore: signal.formEvidenceScore, blockedReasons: blockedReasons)
+  private func makeRepDebug(
+    blockedReasons: [String],
+    dominantEvidence: Double,
+    measuredEvidence: Double,
+    structuralEvidence: Double,
+    upperBodyEvidence: Double,
+    shoulderVelocity: CGFloat,
+    torsoVelocity: CGFloat,
+    topReferenceTorsoY: CGFloat,
+    topReferenceShoulderY: CGFloat,
+    descendingSignal: Bool,
+    ascendingSignal: Bool,
+    shoulderDownTravel: CGFloat,
+    shoulderRecoveryToTop: CGFloat,
+    torsoDownTravel: CGFloat,
+    torsoRecoveryToTop: CGFloat,
+    canProgress: Bool,
+    logicBlockedFrames: Int,
+    startupReady: Bool,
+    startupTopEvidence: Int,
+    startupDescendBridgeUsed: Bool,
+    startBlockedReason: String?,
+    repRearmPending: Bool,
+    topRecoveryFrames: Int,
+    cycleCoreReady: Bool,
+    strictCycleReady: Bool,
+    floorFallbackCycleReady: Bool,
+    motionTravelGate: Bool,
+    topRecoveryGate: Bool,
+    torsoSupportReady: Bool,
+    shoulderSupportReady: Bool,
+    countGatePassed: Bool,
+    countGateBlocked: Bool,
+    countGateBlockReason: String?
+  ) -> PushupRepDebug {
+    PushupRepDebug(
+      smoothedElbowAngle: Double(smoothedElbowAngle),
+      repMinElbowAngle: Double(repMinElbowAngle),
+      smoothedTorsoY: Double(smoothedTorsoY),
+      smoothedShoulderY: Double(smoothedShoulderY),
+      topReferenceTorsoY: Double(topReferenceTorsoY),
+      topReferenceShoulderY: Double(topReferenceShoulderY),
+      shoulderVelocity: Double(shoulderVelocity),
+      torsoVelocity: Double(torsoVelocity),
+      descendingSignal: descendingSignal,
+      ascendingSignal: ascendingSignal,
+      shoulderDownTravel: Double(shoulderDownTravel),
+      shoulderRecoveryToTop: Double(shoulderRecoveryToTop),
+      torsoDownTravel: Double(torsoDownTravel),
+      torsoRecoveryToTop: Double(torsoRecoveryToTop),
+      descendingFrames: descendingFrames,
+      bottomFrames: bottomFrames,
+      ascendingFrames: ascendingFrames,
+      bottomReached: bottomReached,
+      dominantEvidence: dominantEvidence,
+      measuredEvidence: measuredEvidence,
+      structuralEvidence: structuralEvidence,
+      upperBodyEvidence: upperBodyEvidence,
+      blockedReasons: blockedReasons,
+      canProgress: canProgress,
+      logicBlockedFrames: logicBlockedFrames,
+      startupReady: startupReady,
+      startupTopEvidence: startupTopEvidence,
+      startupDescendBridgeUsed: startupDescendBridgeUsed,
+      startBlockedReason: startBlockedReason,
+      repRearmPending: repRearmPending,
+      topRecoveryFrames: topRecoveryFrames,
+      cycleCoreReady: cycleCoreReady,
+      strictCycleReady: strictCycleReady,
+      floorFallbackCycleReady: floorFallbackCycleReady,
+      motionTravelGate: motionTravelGate,
+      topRecoveryGate: topRecoveryGate,
+      torsoSupportReady: torsoSupportReady,
+      shoulderSupportReady: shoulderSupportReady,
+      countGatePassed: countGatePassed,
+      countGateBlocked: countGateBlocked,
+      countGateBlockReason: countGateBlockReason,
+      stateTransitionEvent: consumeStateTransitionEvent(currentState: state)
+    )
+  }
+
+  private func consumeStateTransitionEvent(currentState: PushupState) -> String? {
+    let previousState = previousStateForDebugEvent
+    previousStateForDebugEvent = currentState
+    guard currentState != previousState else { return nil }
+
+    switch currentState {
+    case .bodyFound, .trackingAssisted, .bottomReached, .ascending, .repCounted:
+      return currentState.rawValue
+    default:
+      return nil
+    }
+  }
+
+  // Keep this ordering aligned with operational debugging:
+  // first phase-state blockers, then cycle/travel/top-recovery, then quality/evidence.
+  private func makeCountGateBlockReason(
+    repRearmPending: Bool,
+    bottomReached: Bool,
+    ascendingFrames: Int,
+    torsoDownTravel: CGFloat,
+    torsoRecoveryToTop: CGFloat,
+    shoulderDownTravel: CGFloat,
+    shoulderRecoveryToTop: CGFloat,
+    logicQuality: Double,
+    trackingQuality: Double,
+    dominantEvidence: Double,
+    measuredEvidence: Double,
+    evidenceGate: Double,
+    trackingQualityGate: Double,
+    cycleCoreReady: Bool,
+    strictCycleReady: Bool,
+    floorFallbackCycleReady: Bool,
+    motionTravelGate: Bool,
+    topRecoveryGate: Bool
+  ) -> String {
+    if repRearmPending { return "rearm_pending" }
+    if !bottomReached { return "bottom_not_reached" }
+    if ascendingFrames < config.rep.ascendingConfirmFrames { return "ascending_not_confirmed" }
+    if !cycleCoreReady { return "cycle_core_incomplete" }
+    if strictCycleReady || floorFallbackCycleReady { return "gate_not_applicable" }
+    if !motionTravelGate { return "travel_cycle_incomplete" }
+    if !topRecoveryGate { return "top_recovery_incomplete" }
+    if torsoDownTravel < config.rep.minTorsoCycleTravel { return "torso_down_insufficient" }
+    if shoulderDownTravel < config.rep.minShoulderCycleTravel { return "shoulder_down_insufficient" }
+    if torsoRecoveryToTop < config.rep.minTorsoRecoveryTravel { return "torso_recovery_insufficient" }
+    if shoulderRecoveryToTop < config.rep.minShoulderRecoveryTravel { return "shoulder_recovery_insufficient" }
+    if logicQuality < config.rep.minLogicQualityToCount { return "logic_quality_low" }
+    if trackingQuality < trackingQualityGate { return "tracking_quality_low" }
+    if dominantEvidence < evidenceGate { return "dominant_evidence_low" }
+    if measuredEvidence < evidenceGate * 0.85 { return "measured_evidence_low" }
+    return "gate_not_applicable"
+  }
+
+  private func isStartupReady() -> Bool {
+    state == .plankLocked
+      || (repCount == 0 && state == .bodyFound && plankFrames >= config.rep.startupDescendBridgeMinTopFrames)
+  }
+
+  private func startupBlockedReason() -> String? {
+    guard repCount == 0, !isStartupReady() else { return nil }
+    return "startup_top_evidence_insufficient"
   }
 
   private func computeSignal(joints: [PushlyJointName: TrackedJoint]) -> (
@@ -409,7 +935,9 @@ final class PushupRepDetector {
           + evidence * 0.3
       )
     )
-    let hasRenderableBody = joints.values.filter(\.isRenderable).count >= 4 || (pushupFloorState && shoulderPair != nil && bestRenderableArm != nil)
+    let hasRenderableBody =
+      joints.values.filter(\.isRenderable).count >= 4 ||
+      (pushupFloorState && shoulderPair != nil && (bestRenderableArm != nil || hipPair != nil))
 
     return (
       elbowAngle,

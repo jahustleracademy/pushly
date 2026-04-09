@@ -85,6 +85,7 @@ PODS:
     - RevenueCat (= 5.67.0)
   - PushlyNative (1.0.0):
     - ExpoModulesCore
+    - MediaPipeTasksCommon
     - MediaPipeTasksVision
   - RCTDeprecation (0.81.5)
   - RCTRequired (0.81.5)
@@ -2276,7 +2277,7 @@ SPEC CHECKSUMS:
   MediaPipeTasksCommon: 912f7942cc3aa057bb406af435aaea4c1959255a
   MediaPipeTasksVision: 2df54e614f029da790f442c8b330a37c841a422f
   PurchasesHybridCommon: 6a8f4e30952167d2afaccf17ebcf8f8107060e4c
-  PushlyNative: fe123169084e6d5ea396410e648f3f1eac7826f4
+  PushlyNative: 185c841924f0bd8af7710605a24deee123656489
   RCTDeprecation: 943572d4be82d480a48f4884f670135ae30bf990
   RCTRequired: 8f3cfc90cc25cf6e420ddb3e7caaaabc57df6043
   RCTTypeSafety: 16a4144ca3f959583ab019b57d5633df10b5e97c
@@ -2351,6 +2352,6 @@ SPEC CHECKSUMS:
   RNSVG: ac3047fdd9c0ebac9d0b731a352bddf216af6242
   Yoga: 65431d43277b661ebc7289c6c5d82f64ce42cfe0
 
-PODFILE CHECKSUM: 85408e916854d6b1f1a9e4bdbcd805481f0fb3c9
+PODFILE CHECKSUM: 7fc70a69e25ec3c17a4ac42cdfd15435cbcdbf9a
 
 COCOAPODS: 1.16.2

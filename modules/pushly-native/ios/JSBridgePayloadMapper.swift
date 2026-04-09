@@ -19,7 +19,8 @@ final class JSBridgePayloadMapper {
     orientation: CGImagePropertyOrientation,
     mirrored: Bool,
     debugSessionID: String,
-    visibleJointCount: Int
+    visibleJointCount: Int,
+    backendDebug: PoseBackendDebugState? = nil
   ) -> [String: Any] {
     let renderableJoints = joints.values.filter(\.isRenderable)
     let avgConfidence = renderableJoints.isEmpty
@@ -48,6 +49,77 @@ final class JSBridgePayloadMapper {
       ]
     }
 
+    let requestedBackend = backendDebug?.requestedBackend ?? poseBackend
+    let activeBackend = backendDebug?.activeBackend ?? poseBackend
+    let fallbackAllowed = backendDebug?.fallbackAllowed ?? false
+    let fallbackUsed = backendDebug?.fallbackUsed ?? false
+    let fallbackReason = backendDebug?.fallbackReason
+    let mediapipeAvailable = backendDebug?.mediapipeAvailable ?? (poseBackend == .mediapipe)
+    let mediaPipeDiagnostics = backendDebug?.mediaPipeDiagnostics
+    let compiledWithMediaPipe = mediaPipeDiagnostics?.compiledWithMediaPipe ?? (poseBackend == .mediapipe)
+    let poseModelFound = mediaPipeDiagnostics?.poseModelFound ?? false
+    let poseModelName = mediaPipeDiagnostics?.poseModelName
+    let poseModelPath = mediaPipeDiagnostics?.poseModelPath
+    let poseLandmarkerInitStatus = mediaPipeDiagnostics?.poseLandmarkerInitStatus ?? "unknown"
+    let mediapipeInitReason = mediaPipeDiagnostics?.mediapipeInitReason
+    let repDebug = rep.repDebug
+    let pushupDebug: [String: Any] = [
+      "requestedBackend": requestedBackend.rawValue,
+      "activeBackend": activeBackend.rawValue,
+      "fallbackAllowed": fallbackAllowed,
+      "fallbackUsed": fallbackUsed,
+      "fallbackReason": fallbackReason as Any,
+      "mediapipeAvailable": mediapipeAvailable,
+      "compiledWithMediaPipe": compiledWithMediaPipe,
+      "poseModelFound": poseModelFound,
+      "poseModelName": poseModelName as Any,
+      "poseModelPath": poseModelPath as Any,
+      "poseLandmarkerInitStatus": poseLandmarkerInitStatus,
+      "mediapipeInitReason": mediapipeInitReason as Any,
+      "state": rep.state.rawValue,
+      "repCount": rep.repCount,
+      "repBlockedReasons": rep.blockedReasons,
+      "trackingQuality": quality.trackingQuality,
+      "logicQuality": quality.logicQuality,
+      "upperBodyCoverage": quality.upperBodyCoverage,
+      "wristRetention": quality.wristRetention,
+      "smoothedElbowAngle": repDebug?.smoothedElbowAngle as Any,
+      "repMinElbowAngle": repDebug?.repMinElbowAngle as Any,
+      "smoothedTorsoY": repDebug?.smoothedTorsoY as Any,
+      "smoothedShoulderY": repDebug?.smoothedShoulderY as Any,
+      "topReferenceTorsoY": repDebug?.topReferenceTorsoY as Any,
+      "topReferenceShoulderY": repDebug?.topReferenceShoulderY as Any,
+      "descendingSignal": repDebug?.descendingSignal as Any,
+      "ascendingSignal": repDebug?.ascendingSignal as Any,
+      "torsoDownTravel": repDebug?.torsoDownTravel as Any,
+      "torsoRecoveryToTop": repDebug?.torsoRecoveryToTop as Any,
+      "shoulderDownTravel": repDebug?.shoulderDownTravel as Any,
+      "shoulderRecoveryToTop": repDebug?.shoulderRecoveryToTop as Any,
+      "bottomReached": repDebug?.bottomReached as Any,
+      "descendingFrames": repDebug?.descendingFrames as Any,
+      "bottomFrames": repDebug?.bottomFrames as Any,
+      "ascendingFrames": repDebug?.ascendingFrames as Any,
+      "canProgress": repDebug?.canProgress as Any,
+      "logicBlockedFrames": repDebug?.logicBlockedFrames as Any,
+      "startupReady": repDebug?.startupReady as Any,
+      "startupTopEvidence": repDebug?.startupTopEvidence as Any,
+      "startupDescendBridgeUsed": repDebug?.startupDescendBridgeUsed as Any,
+      "startBlockedReason": repDebug?.startBlockedReason as Any,
+      "repRearmPending": repDebug?.repRearmPending as Any,
+      "topRecoveryFrames": repDebug?.topRecoveryFrames as Any,
+      "cycleCoreReady": repDebug?.cycleCoreReady as Any,
+      "strictCycleReady": repDebug?.strictCycleReady as Any,
+      "floorFallbackCycleReady": repDebug?.floorFallbackCycleReady as Any,
+      "motionTravelGate": repDebug?.motionTravelGate as Any,
+      "topRecoveryGate": repDebug?.topRecoveryGate as Any,
+      "torsoSupportReady": repDebug?.torsoSupportReady as Any,
+      "shoulderSupportReady": repDebug?.shoulderSupportReady as Any,
+      "countGatePassed": repDebug?.countGatePassed as Any,
+      "countGateBlocked": repDebug?.countGateBlocked as Any,
+      "countGateBlockReason": repDebug?.countGateBlockReason as Any,
+      "stateTransitionEvent": repDebug?.stateTransitionEvent as Any
+    ]
+
     var payload: [String: Any] = [
       "bodyDetected": quality.bodyVisibilityState != .notFound,
       "confidence": avgConfidence,
@@ -56,6 +128,8 @@ final class JSBridgePayloadMapper {
       "joints": payloadJoints,
       "repCount": rep.repCount,
       "state": rep.state.rawValue,
+      "repDebug": repDebug?.toDictionary() as Any,
+      "pushupDebug": pushupDebug,
 
       // Legacy continuity state kept for backward compatibility.
       "trackingState": quality.trackingState.rawValue,
@@ -80,6 +154,18 @@ final class JSBridgePayloadMapper {
       "bodyVisibilityState": quality.bodyVisibilityState.rawValue,
       "lowLightDetected": lowLightDetected,
       "poseBackend": poseBackend.rawValue,
+      "requestedBackend": requestedBackend.rawValue,
+      "activeBackend": activeBackend.rawValue,
+      "fallbackAllowed": fallbackAllowed,
+      "fallbackUsed": fallbackUsed,
+      "fallbackReason": fallbackReason as Any,
+      "mediapipeAvailable": mediapipeAvailable,
+      "compiledWithMediaPipe": compiledWithMediaPipe,
+      "poseModelFound": poseModelFound,
+      "poseModelName": poseModelName as Any,
+      "poseModelPath": poseModelPath as Any,
+      "poseLandmarkerInitStatus": poseLandmarkerInitStatus,
+      "mediapipeInitReason": mediapipeInitReason as Any,
       "reacquireSource": reacquireSource.rawValue,
       "visibleJointCount": visibleJointCount,
       "mirrored": mirrored,

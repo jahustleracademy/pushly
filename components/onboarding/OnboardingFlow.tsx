@@ -85,6 +85,7 @@ export function OnboardingFlow() {
   const [poseEngineReady, setPoseEngineReady] = useState(Platform.OS !== 'ios');
   const [cameraStatus, setCameraStatus] = useState<CameraAuthorizationStatus>('not_determined');
   const [monitoringStatus, setMonitoringStatus] = useState<DeviceActivityMonitoringStatus>('inactive');
+  const [latestPoseFrame, setLatestPoseFrame] = useState<PoseFrame | null>(null);
   const transition = useRef(new Animated.Value(1)).current;
   const backdropPulse = useRef(new Animated.Value(0)).current;
   const nativeBootstrapDone = useRef(false);
@@ -286,6 +287,7 @@ export function OnboardingFlow() {
   };
 
   const handlePoseFrame = ({ nativeEvent }: { nativeEvent: PoseFrame }) => {
+    setLatestPoseFrame(nativeEvent);
     flow.setPoseFrame(nativeEvent);
   };
   const isCameraFirstStep = flow.currentStepId === 'pushUpTrial';
@@ -482,6 +484,7 @@ export function OnboardingFlow() {
                   theme={theme}
                   leadApp={leadApp}
                   answers={flow.answers}
+                  frame={latestPoseFrame}
                   onPoseFrame={handlePoseFrame}
                 />
               ) : null}
@@ -1167,14 +1170,32 @@ function PushUpTrialStep({
   theme,
   leadApp,
   answers,
+  frame,
   onPoseFrame
 }: {
   styles: ReturnType<typeof createStyles>;
   theme: ReturnType<typeof useTheme>['theme'];
   leadApp: AppSelectionOption;
   answers: ReturnType<typeof useOnboardingFlow>['answers'];
+  frame: PoseFrame | null;
   onPoseFrame: (event: { nativeEvent: PoseFrame }) => void;
 }) {
+  const showDebugPanel = __DEV__;
+  const debug = frame?.pushupDebug;
+  const repBlockedReasons = debug?.repBlockedReasons ?? frame?.diagnostics?.repBlockedReasons ?? frame?.repDebug?.blockedReasons ?? [];
+  const compiledWithMediaPipe = debug?.compiledWithMediaPipe ?? frame?.compiledWithMediaPipe;
+  const poseModelFound = debug?.poseModelFound ?? frame?.poseModelFound;
+  const poseModelName = debug?.poseModelName ?? frame?.poseModelName;
+  const poseModelPath = debug?.poseModelPath ?? frame?.poseModelPath;
+  const poseLandmarkerInitStatus = debug?.poseLandmarkerInitStatus ?? frame?.poseLandmarkerInitStatus;
+  const mediapipeInitReason = debug?.mediapipeInitReason ?? frame?.mediapipeInitReason;
+  const mediaPipeWarning = resolveMediaPipeWarning(mediapipeInitReason);
+  const mediaPipeIssue =
+    (debug?.requestedBackend ?? frame?.requestedBackend) === 'mediapipe' &&
+    ((debug?.mediapipeAvailable ?? frame?.mediapipeAvailable) === false ||
+      Boolean(mediapipeInitReason) ||
+      Boolean(debug?.fallbackReason ?? frame?.fallbackReason));
+
   return (
     <View style={[styles.standardStep, styles.cameraFirstStep]}>
       <Text variant="heading" numberOfLines={1} style={styles.cameraTrialHeadline}>
@@ -1185,32 +1206,116 @@ function PushUpTrialStep({
         <PushlyCameraView
           isActive
           showSkeleton
-          repTarget={PUSHLY_TRIAL_REP_TARGET}
-          poseBackendMode="mediapipe"
+          repTarget={999}
+          poseBackendMode="auto"
           forceFullFrameProcessing={true}
+          debugMode={false}
           onPoseFrame={onPoseFrame}
           style={styles.cameraSurface}
         />
 
-        <View style={styles.cameraOverlayRow}>
-          <StatusChip
-            label="Reps"
-            value={`${answers.pushUpRepCount}/${PUSHLY_TRIAL_REP_TARGET}`}
-            tone={answers.pushUpTestPassed ? 'accent' : 'danger'}
-            styles={styles}
-            theme={theme}
-          />
-          <StatusChip
-            label="Form + Tracking"
-            value={`${Math.round(answers.pushUpFormEvidenceScore * 100)}%`}
-            tone={answers.pushUpFormEvidenceScore > 0.7 ? 'accent' : 'danger'}
-            styles={styles}
-            theme={theme}
-          />
+        <View style={styles.cameraCounterWrap}>
+          <BlurView intensity={22} tint="dark" style={styles.cameraCounterCircle}>
+            <Text variant="heading" style={styles.cameraCounterValue}>
+              {answers.pushUpRepCount}
+            </Text>
+          </BlurView>
         </View>
       </View>
+
+      {showDebugPanel ? (
+        <BlurView intensity={18} tint="dark" style={styles.cameraDebugPanel}>
+          <Text variant="caption" style={styles.cameraDebugHeading}>
+            Debug
+          </Text>
+          {mediaPipeIssue ? (
+            <View style={styles.cameraDebugWarning}>
+              <Text variant="caption" style={styles.cameraDebugWarningTitle}>
+                MediaPipe nicht verfügbar
+              </Text>
+              <Text variant="caption" style={styles.cameraDebugWarningBody}>
+                {mediaPipeWarning}
+              </Text>
+            </View>
+          ) : null}
+          {mediaPipeIssue ? (
+            <Text variant="caption" style={styles.cameraDebugLine}>
+              MediaPipe status: {(debug?.mediapipeAvailable ?? frame?.mediapipeAvailable) === false ? 'unavailable' : 'error'} ({mediapipeInitReason ?? debug?.fallbackReason ?? frame?.fallbackReason ?? 'unknown'})
+            </Text>
+          ) : null}
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            compiledWithMediaPipe: {typeof compiledWithMediaPipe === 'boolean' ? (compiledWithMediaPipe ? 'yes' : 'no') : '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            poseModelFound: {typeof poseModelFound === 'boolean' ? (poseModelFound ? 'yes' : 'no') : '-'} | poseModelName: {poseModelName ?? '-'}
+          </Text>
+          <Text variant="caption" numberOfLines={1} style={styles.cameraDebugLine}>
+            poseModelPath: {poseModelPath ?? '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            poseLandmarkerInitStatus: {poseLandmarkerInitStatus ?? '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            mediapipeInitReason: {mediapipeInitReason ?? '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            state: {debug?.state ?? frame?.state ?? answers.pushUpState} | repCount: {debug?.repCount ?? answers.pushUpRepCount}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            backend req/active: {debug?.requestedBackend ?? frame?.requestedBackend ?? '-'} / {debug?.activeBackend ?? frame?.activeBackend ?? frame?.poseBackend ?? '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            mediapipeAvailable: {(debug?.mediapipeAvailable ?? frame?.mediapipeAvailable) ? 'yes' : 'no'} | fallbackReason: {debug?.fallbackReason ?? frame?.fallbackReason ?? '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            fallback allowed/used: {(debug?.fallbackAllowed ?? frame?.fallbackAllowed) ? 'yes' : 'no'} / {(debug?.fallbackUsed ?? frame?.fallbackUsed) ? 'yes' : 'no'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            trackingQuality: {formatDebugNumber(debug?.trackingQuality ?? frame?.trackingQuality)} | logicQuality: {formatDebugNumber(debug?.logicQuality ?? frame?.logicQuality)}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            upperBodyCoverage: {formatDebugNumber(debug?.upperBodyCoverage ?? frame?.upperBodyCoverage)} | wristRetention: {formatDebugNumber(debug?.wristRetention ?? frame?.wristRetention)}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            gate pass/block: {debug?.countGatePassed ? 'yes' : 'no'} / {debug?.countGateBlocked ? 'yes' : 'no'} ({debug?.countGateBlockReason ?? '-'})
+          </Text>
+          <Text variant="caption" numberOfLines={2} style={styles.cameraDebugLine}>
+            repBlockedReasons: {repBlockedReasons.length > 0 ? repBlockedReasons.join(', ') : '-'}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            bottomReached: {debug?.bottomReached ? 'yes' : 'no'} | frames d/b/a: {debug?.descendingFrames ?? 0}/{debug?.bottomFrames ?? 0}/{debug?.ascendingFrames ?? 0}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            torsoDown: {formatDebugNumber(debug?.torsoDownTravel)} | torsoRecovery: {formatDebugNumber(debug?.torsoRecoveryToTop)}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            shoulderDown: {formatDebugNumber(debug?.shoulderDownTravel)} | shoulderRecovery: {formatDebugNumber(debug?.shoulderRecoveryToTop)}
+          </Text>
+          <Text variant="caption" style={styles.cameraDebugLine}>
+            signals d/a: {debug?.descendingSignal ? '1' : '0'}/{debug?.ascendingSignal ? '1' : '0'} | cycle/strict/floor: {debug?.cycleCoreReady ? '1' : '0'}/{debug?.strictCycleReady ? '1' : '0'}/{debug?.floorFallbackCycleReady ? '1' : '0'}
+          </Text>
+        </BlurView>
+      ) : null}
     </View>
   );
+}
+
+function formatDebugNumber(value: number | undefined): string {
+  if (typeof value !== 'number' || Number.isNaN(value)) {
+    return '-';
+  }
+  return value.toFixed(3);
+}
+
+function resolveMediaPipeWarning(reason?: string): string {
+  switch (reason) {
+    case 'pose_model_missing':
+      return 'Modelldatei fehlt im iOS-Bundle. App neu bauen und pose_landmarker_*.task mitliefern.';
+    case 'mediapipe_tasks_vision_not_compiled':
+      return 'MediaPipe-Framework ist nicht im Build. iOS-Dependencies/Pods installieren und neu bauen.';
+    default:
+      return `Landmarker-Initialisierung fehlgeschlagen (${reason ?? 'unknown'}). App neu starten oder iOS-Build neu erstellen.`;
+  }
 }
 
 function RatingStep({
@@ -2767,13 +2872,56 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
       borderColor: 'rgba(255,255,255,0.1)',
       backgroundColor: 'rgba(255,255,255,0.03)'
     },
-    cameraOverlayRow: {
+    cameraCounterWrap: {
       position: 'absolute',
-      left: 12,
-      right: 12,
+      left: 0,
+      right: 0,
       bottom: 12,
-      flexDirection: 'row',
-      gap: 10
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    cameraCounterCircle: {
+      width: 88,
+      height: 88,
+      borderRadius: 44,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.2)',
+      backgroundColor: 'rgba(0,0,0,0.38)',
+      alignItems: 'center',
+      justifyContent: 'center'
+    },
+    cameraCounterValue: {
+      color: theme.colors.text
+    },
+    cameraDebugPanel: {
+      borderRadius: 14,
+      borderWidth: 1,
+      borderColor: 'rgba(255,255,255,0.14)',
+      backgroundColor: 'rgba(8,10,8,0.58)',
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      gap: 2
+    },
+    cameraDebugHeading: {
+      color: theme.colors.accent
+    },
+    cameraDebugLine: {
+      color: theme.colors.textMuted
+    },
+    cameraDebugWarning: {
+      borderRadius: 10,
+      borderWidth: 1,
+      borderColor: 'rgba(255,109,91,0.55)',
+      backgroundColor: 'rgba(76,18,14,0.55)',
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+      marginBottom: 4
+    },
+    cameraDebugWarningTitle: {
+      color: '#FFB3A9'
+    },
+    cameraDebugWarningBody: {
+      color: '#FFD6D0'
     },
     timelineStack: {
       gap: 12

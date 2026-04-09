@@ -12,12 +12,12 @@ private final class JointSpringAnimator {
 
   private var states: [PushlyJointName: SpringState] = [:]
 
-  private let minStiffness: CGFloat = 0.75
-  private let maxStiffness: CGFloat = 0.95
-  private let stableDamping: CGFloat = 0.86
-  private let movingDamping: CGFloat = 0.76
+  private let minStiffness: CGFloat = 0.86
+  private let maxStiffness: CGFloat = 1.04
+  private let stableDamping: CGFloat = 0.80
+  private let movingDamping: CGFloat = 0.69
   private let microJitterThresholdPx: CGFloat = 0.9
-  private let maxVelocityPerFrame: CGFloat = 0.085
+  private let maxVelocityPerFrame: CGFloat = 0.11
 
   func updateTargets(_ joints: [PushlyJointName: TrackedJoint]) {
     for (name, joint) in joints {
@@ -131,6 +131,13 @@ final class SkeletonRenderer {
 
   private let springAnimator = JointSpringAnimator()
   private let lineEndpointAlpha: CGFloat
+  private let measuredLineWidth: CGFloat = 4.2
+  private let inferredLineWidth: CGFloat = 4.0
+  private let measuredJointRadius: CGFloat = 3.6
+  private let inferredJointRadius: CGFloat = 2.9
+  private let debugRawJointRadius: CGFloat = 1.9
+  private let debugTrackedJointRadius: CGFloat = 2.2
+  private let debugSpringJointRadius: CGFloat = 2.5
 
   private let connections: [(PushlyJointName, PushlyJointName)] = [
     (.leftShoulder, .rightShoulder),
@@ -153,6 +160,7 @@ final class SkeletonRenderer {
 
   private var lastRenderTime: CFTimeInterval = CACurrentMediaTime()
   private var lastLineEndpoints: [String: (CGPoint, CGPoint)] = [:]
+  private var lastLineEndpointUpdateTimes: [String: CFTimeInterval] = [:]
   private var isVisible = false
   private var pendingHideWorkItem: DispatchWorkItem?
   private var projectionContext: PoseCoordinateConverter.ProjectionContext?
@@ -160,6 +168,7 @@ final class SkeletonRenderer {
   private var lastHeadUpDirection = CGVector(dx: 0, dy: 1)
   private var lastShoulderMid: CGPoint?
   private var lastShoulderSpan: CGFloat = 0.14
+  private var debugSuppressedConnectionCounts: [String: Int] = [:]
 #if DEBUG
   private var debugInvalidGeometryCount = 0
   private var debugVirtualHeadIssueCount = 0
@@ -167,8 +176,8 @@ final class SkeletonRenderer {
 
   init(containerLayer: CALayer, lineEndpointAlpha: CGFloat) {
     self.lineEndpointAlpha = min(0.9, max(0.35, lineEndpointAlpha))
-    configure(layer: measuredLineLayer, lineWidth: 3.2, opacity: 1.0)
-    configure(layer: inferredLineLayer, lineWidth: 3.2, opacity: 0.4)
+    configure(layer: measuredLineLayer, lineWidth: measuredLineWidth, opacity: 1.0, shadowOpacity: 0.28, shadowRadius: 7.6)
+    configure(layer: inferredLineLayer, lineWidth: inferredLineWidth, opacity: 0.42, shadowOpacity: 0.22, shadowRadius: 7.2)
     configure(layer: measuredJointLayer, lineWidth: 0, opacity: 1)
     configure(layer: inferredJointLayer, lineWidth: 0, opacity: 0.4)
 
@@ -229,7 +238,7 @@ final class SkeletonRenderer {
     lastRenderTime = now
 
     springAnimator.updateTargets(joints)
-    let stateVelocity = trackingState == .reacquire ? avgBodyVelocity * 0.45 : avgBodyVelocity
+    let stateVelocity = trackingState == .reacquire ? avgBodyVelocity * 0.7 : avgBodyVelocity
     let springPositions = springAnimator.step(dt: dt, bounds: bounds, avgBodyVelocity: stateVelocity)
     let renderableNames = Set(springPositions.keys)
     guard renderableNames.count >= 3 else {
@@ -287,6 +296,31 @@ final class SkeletonRenderer {
 #endif
         continue
       }
+      let plausibility = evaluateConnectionPlausibility(
+        a: a,
+        b: b,
+        jointA: ja,
+        jointB: jb,
+        canonicalA: sa,
+        canonicalB: sb,
+        pixelA: p1,
+        pixelB: p2,
+        joints: joints,
+        springPositions: springPositions,
+        bounds: bounds,
+        now: now
+      )
+      guard plausibility.allowed else {
+        let key = "\(a.rawValue)-\(b.rawValue)"
+        if plausibility.reason != "endpoint_jump_unplausible" {
+          lastLineEndpoints[key] = nil
+          lastLineEndpointUpdateTimes[key] = nil
+        }
+#if DEBUG
+        logSuppressedConnection(reason: plausibility.reason, a: a, b: b)
+#endif
+        continue
+      }
       let key = "\(a.rawValue)-\(b.rawValue)"
       let smoothedEndpoints = smoothEndpointsForLine(key: key, p1: p1, p2: p2)
       let useInferred = ja.sourceType == .inferred || ja.sourceType == .predicted || jb.sourceType == .inferred || jb.sourceType == .predicted
@@ -302,18 +336,18 @@ final class SkeletonRenderer {
       guard let springCenter = safeConvert(springPosition, in: bounds) else {
         continue
       }
-      let springRadius: CGFloat = (joint.sourceType == .inferred || joint.sourceType == .predicted) ? 2.2 : 2.9
+      let springRadius: CGFloat = (joint.sourceType == .inferred || joint.sourceType == .predicted) ? inferredJointRadius : measuredJointRadius
       let jointPath = (joint.sourceType == .inferred || joint.sourceType == .predicted) ? inferredDots : measuredDots
       addDot(path: jointPath, center: springCenter, radius: springRadius)
 
       if debugMode {
         if let rawCenter = safeConvert(joint.rawPosition, in: bounds) {
-          addDot(path: rawDots, center: rawCenter, radius: 1.7)
+          addDot(path: rawDots, center: rawCenter, radius: debugRawJointRadius)
         }
         if let trackedCenter = safeConvert(joint.smoothedPosition, in: bounds) {
-          addDot(path: trackedDots, center: trackedCenter, radius: 2.0)
+          addDot(path: trackedDots, center: trackedCenter, radius: debugTrackedJointRadius)
         }
-        addDot(path: springDots, center: springCenter, radius: 2.3)
+        addDot(path: springDots, center: springCenter, radius: debugSpringJointRadius)
       }
     }
 
@@ -349,15 +383,21 @@ final class SkeletonRenderer {
     )
   }
 
-  private func configure(layer: CAShapeLayer, lineWidth: CGFloat, opacity: Float) {
+  private func configure(
+    layer: CAShapeLayer,
+    lineWidth: CGFloat,
+    opacity: Float,
+    shadowOpacity: Float = 0.25,
+    shadowRadius: CGFloat = 7
+  ) {
     layer.fillColor = UIColor.clear.cgColor
     layer.strokeColor = UIColor(red: 186 / 255, green: 250 / 255, blue: 32 / 255, alpha: 0.98).cgColor
     layer.lineWidth = lineWidth
     layer.lineCap = .round
     layer.lineJoin = .round
     layer.shadowColor = UIColor(red: 186 / 255, green: 250 / 255, blue: 32 / 255, alpha: 1).cgColor
-    layer.shadowOpacity = 0.25
-    layer.shadowRadius = 7
+    layer.shadowOpacity = shadowOpacity
+    layer.shadowRadius = shadowRadius
     layer.opacity = opacity
   }
 
@@ -375,6 +415,7 @@ final class SkeletonRenderer {
   private func smoothEndpointsForLine(key: String, p1: CGPoint, p2: CGPoint) -> (CGPoint, CGPoint) {
     guard let previous = lastLineEndpoints[key] else {
       lastLineEndpoints[key] = (p1, p2)
+      lastLineEndpointUpdateTimes[key] = CACurrentMediaTime()
       return (p1, p2)
     }
 
@@ -388,6 +429,7 @@ final class SkeletonRenderer {
       y: previous.1.y + (p2.y - previous.1.y) * alpha
     )
     lastLineEndpoints[key] = (smoothed1, smoothed2)
+    lastLineEndpointUpdateTimes[key] = CACurrentMediaTime()
     return (smoothed1, smoothed2)
   }
 
@@ -448,6 +490,7 @@ final class SkeletonRenderer {
       self.clear()
       self.springAnimator.reset()
       self.lastLineEndpoints.removeAll()
+      self.lastLineEndpointUpdateTimes.removeAll()
       self.lastVirtualHeadAttachment = nil
       self.lastHeadUpDirection = CGVector(dx: 0, dy: 1)
       self.lastShoulderMid = nil
@@ -515,6 +558,165 @@ final class SkeletonRenderer {
 
     guard count > 0 else { return (0, 0) }
     return (sqrt(rawTrackedSum / count), sqrt(trackedSpringSum / count))
+  }
+
+  // Connection sanity gates:
+  // 1) suppress implausible geometry spikes,
+  // 2) keep uncertain (inferred/predicted) segments conservative,
+  // 3) be stricter in floor-like push-up posture to avoid phantom cross-links.
+  private func evaluateConnectionPlausibility(
+    a: PushlyJointName,
+    b: PushlyJointName,
+    jointA: TrackedJoint,
+    jointB: TrackedJoint,
+    canonicalA: CGPoint,
+    canonicalB: CGPoint,
+    pixelA: CGPoint,
+    pixelB: CGPoint,
+    joints: [PushlyJointName: TrackedJoint],
+    springPositions: [PushlyJointName: CGPoint],
+    bounds: CGRect,
+    now: CFTimeInterval
+  ) -> (allowed: Bool, reason: String) {
+    let connectionKey = "\(a.rawValue)-\(b.rawValue)"
+    let isUncertainEndpoint = isUncertainRenderEndpoint(jointA) || isUncertainRenderEndpoint(jointB)
+    let isPredictedEndpoint = jointA.sourceType == .predicted || jointB.sourceType == .predicted
+    let pushupFloorLike = isLikelyPushupFloorPosture(joints: joints, springPositions: springPositions)
+
+    let minEndpointConfidence: Float = {
+      if !isUncertainEndpoint { return 0.04 }
+      if isPredictedEndpoint { return pushupFloorLike ? 0.16 : 0.13 }
+      return pushupFloorLike ? 0.12 : 0.1
+    }()
+    guard jointA.renderConfidence >= minEndpointConfidence,
+          jointB.renderConfidence >= minEndpointConfidence else {
+      return (false, "endpoint_confidence_low")
+    }
+
+    let lineLength = distance(canonicalA, canonicalB)
+    guard lineLength.isFinite, lineLength > 0.0008 else {
+      return (false, "line_length_invalid")
+    }
+    let torsoScale = estimatedTorsoScale(springPositions: springPositions)
+    let maxLength = maxConnectionLength(
+      a: a,
+      b: b,
+      torsoScale: torsoScale,
+      pushupFloorLike: pushupFloorLike,
+      uncertainEndpoint: isUncertainEndpoint
+    )
+    if lineLength > maxLength {
+      return (false, "distance_unplausible")
+    }
+
+    let jumpMemorySeconds: CFTimeInterval = pushupFloorLike ? 0.28 : 0.22
+    let hasFreshEndpointHistory = (lastLineEndpointUpdateTimes[connectionKey].map { now - $0 <= jumpMemorySeconds }) ?? false
+    if isUncertainEndpoint, hasFreshEndpointHistory, let previous = lastLineEndpoints[connectionKey] {
+      let jumpA = distance(previous.0, pixelA)
+      let jumpB = distance(previous.1, pixelB)
+      let jumpMax = max(14, min(bounds.width, bounds.height) * (pushupFloorLike ? 0.085 : 0.11))
+      if jumpA > jumpMax || jumpB > jumpMax {
+        return (false, "endpoint_jump_unplausible")
+      }
+    }
+
+    return (true, "ok")
+  }
+
+  private func isUncertainRenderEndpoint(_ joint: TrackedJoint) -> Bool {
+    if joint.sourceType == .inferred || joint.sourceType == .predicted {
+      return true
+    }
+    return joint.renderConfidence < 0.1
+  }
+
+  private func estimatedTorsoScale(springPositions: [PushlyJointName: CGPoint]) -> CGFloat {
+    let leftShoulder = sanitizeCanonicalPoint(springPositions[.leftShoulder])
+    let rightShoulder = sanitizeCanonicalPoint(springPositions[.rightShoulder])
+    let leftHip = sanitizeCanonicalPoint(springPositions[.leftHip])
+    let rightHip = sanitizeCanonicalPoint(springPositions[.rightHip])
+    let shoulderSpan: CGFloat = {
+      guard let leftShoulder, let rightShoulder else { return lastShoulderSpan }
+      let value = distance(leftShoulder, rightShoulder)
+      guard value.isFinite else { return lastShoulderSpan }
+      return min(0.46, max(0.08, value))
+    }()
+    let hipMid = midpoint(leftHip, rightHip)
+    let shoulderMid = midpoint(leftShoulder, rightShoulder)
+    let torsoLength: CGFloat = {
+      guard let shoulderMid, let hipMid else { return max(0.1, shoulderSpan * 1.12) }
+      let value = distance(shoulderMid, hipMid)
+      return min(0.62, max(0.08, value))
+    }()
+    return max(0.09, max(shoulderSpan, torsoLength))
+  }
+
+  private func maxConnectionLength(
+    a: PushlyJointName,
+    b: PushlyJointName,
+    torsoScale: CGFloat,
+    pushupFloorLike: Bool,
+    uncertainEndpoint: Bool
+  ) -> CGFloat {
+    let key = normalizedConnectionKey(a, b)
+    let baseMultiplier: CGFloat
+    switch key {
+    case "leftShoulder-rightShoulder", "leftHip-rightHip":
+      baseMultiplier = 1.25
+    case "leftShoulder-leftElbow", "rightShoulder-rightElbow":
+      baseMultiplier = 1.08
+    case "leftElbow-leftWrist", "rightElbow-rightWrist":
+      baseMultiplier = 1.02
+    case "leftWrist-leftHand", "rightWrist-rightHand":
+      baseMultiplier = 0.78
+    case "leftShoulder-leftHip", "rightShoulder-rightHip":
+      baseMultiplier = 1.45
+    case "leftHip-leftKnee", "rightHip-rightKnee":
+      baseMultiplier = 1.34
+    case "leftKnee-leftAnkle", "rightKnee-rightAnkle":
+      baseMultiplier = 1.26
+    case "leftAnkle-leftFoot", "rightAnkle-rightFoot":
+      baseMultiplier = 0.82
+    default:
+      baseMultiplier = 1.35
+    }
+    var multiplier = baseMultiplier
+    if uncertainEndpoint { multiplier *= 0.92 }
+    if pushupFloorLike && uncertainEndpoint { multiplier *= 0.9 }
+    return max(0.045, torsoScale * multiplier)
+  }
+
+  private func normalizedConnectionKey(_ a: PushlyJointName, _ b: PushlyJointName) -> String {
+    let lhs = a.rawValue
+    let rhs = b.rawValue
+    return lhs < rhs ? "\(lhs)-\(rhs)" : "\(rhs)-\(lhs)"
+  }
+
+  private func isLikelyPushupFloorPosture(
+    joints: [PushlyJointName: TrackedJoint],
+    springPositions: [PushlyJointName: CGPoint]
+  ) -> Bool {
+    let leftShoulder = sanitizeCanonicalPoint(springPositions[.leftShoulder])
+    let rightShoulder = sanitizeCanonicalPoint(springPositions[.rightShoulder])
+    let shoulderMid = midpoint(leftShoulder, rightShoulder)
+    let leftHip = sanitizeCanonicalPoint(springPositions[.leftHip])
+    let rightHip = sanitizeCanonicalPoint(springPositions[.rightHip])
+    let hipMid = midpoint(leftHip, rightHip)
+    let nose = sanitizeCanonicalPoint(springPositions[.nose])
+    guard let shoulderMid, let nose else { return false }
+
+    let shoulderSpan: CGFloat = {
+      guard let leftShoulder, let rightShoulder else { return lastShoulderSpan }
+      return distance(leftShoulder, rightShoulder)
+    }()
+    let noseShoulderDelta = abs(nose.y - shoulderMid.y)
+    let shoulderHipDelta = hipMid.map { abs($0.y - shoulderMid.y) } ?? 0
+    let floorLikeGeometry = noseShoulderDelta < 0.16 && shoulderSpan > 0.08 && shoulderHipDelta < 0.24
+    let inferredHeavyCore = [joints[.leftHip], joints[.rightHip], joints[.leftWrist], joints[.rightWrist]]
+      .compactMap { $0 }
+      .filter { $0.sourceType == .inferred || $0.sourceType == .predicted }
+      .count >= 2
+    return floorLikeGeometry || inferredHeavyCore
   }
 
   private func buildVirtualHeadAttachment(
@@ -701,6 +903,19 @@ final class SkeletonRenderer {
     CGPoint(x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5)
   }
 
+  private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {
+    switch (a, b) {
+    case let (.some(pa), .some(pb)):
+      return CGPoint(x: (pa.x + pb.x) * 0.5, y: (pa.y + pb.y) * 0.5)
+    case let (.some(pa), .none):
+      return pa
+    case let (.none, .some(pb)):
+      return pb
+    default:
+      return nil
+    }
+  }
+
   private func distance(_ a: CGPoint, _ b: CGPoint) -> CGFloat {
     hypot(a.x - b.x, a.y - b.y)
   }
@@ -835,5 +1050,16 @@ final class SkeletonRenderer {
     }
     return true
   }
+
+#if DEBUG
+  private func logSuppressedConnection(reason: String, a: PushlyJointName, b: PushlyJointName) {
+    let key = "\(reason):\(a.rawValue)-\(b.rawValue)"
+    let next = (debugSuppressedConnectionCounts[key] ?? 0) + 1
+    debugSuppressedConnectionCounts[key] = next
+    if next <= 3 || next % 30 == 0 {
+      print("[Pose][SkeletonRenderer] suppressed line \(a.rawValue)-\(b.rawValue) reason=\(reason) count=\(next)")
+    }
+  }
+#endif
 }
 #endif

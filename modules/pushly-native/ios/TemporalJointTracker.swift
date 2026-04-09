@@ -242,7 +242,8 @@ final class TemporalJointTracker {
     roiHint: CGRect?,
     frameTimestamp: TimeInterval,
     tooCloseFallbackActive: Bool = false,
-    reacquireActive: Bool = false
+    reacquireActive: Bool = false,
+    pushupFloorModeActive: Bool = false
   ) -> [PushlyJointName: TrackedJoint] {
     let dt = frameDelta(now: frameTimestamp)
     updateSideSwapBlockers(
@@ -267,7 +268,13 @@ final class TemporalJointTracker {
     for jointName in PushlyJointName.allCases {
       if let measurement = sideStabilizedMeasured[jointName] {
         if measurement.sourceType == .missing {
-          if let tracked = updateMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp, dt: dt) {
+          if let tracked = updateMissingJoint(
+            name: jointName,
+            fallbackPoint: measurement.point,
+            now: frameTimestamp,
+            dt: dt,
+            pushupFloorModeActive: pushupFloorModeActive
+          ) {
             next[jointName] = tracked
           } else {
             next[jointName] = explicitMissingJoint(name: jointName, fallbackPoint: measurement.point, now: frameTimestamp)
@@ -286,7 +293,12 @@ final class TemporalJointTracker {
         continue
       }
 
-      if let tracked = updateMissingJoint(name: jointName, now: frameTimestamp, dt: dt) {
+      if let tracked = updateMissingJoint(
+        name: jointName,
+        now: frameTimestamp,
+        dt: dt,
+        pushupFloorModeActive: pushupFloorModeActive
+      ) {
         next[jointName] = tracked
       }
     }
@@ -295,11 +307,11 @@ final class TemporalJointTracker {
       updateTorsoFrame(from: next, now: frameTimestamp)
       updateStableOffsets(from: next, now: frameTimestamp)
       updateStableTorsoOffsets(from: next, now: frameTimestamp)
-      applyTorsoInference(joints: &next, now: frameTimestamp)
-      applyKinematicInference(joints: &next, now: frameTimestamp)
+      applyTorsoInference(joints: &next, now: frameTimestamp, pushupFloorModeActive: pushupFloorModeActive)
+      applyKinematicInference(joints: &next, now: frameTimestamp, pushupFloorModeActive: pushupFloorModeActive)
     } else {
       updateTorsoFrame(from: next, now: frameTimestamp)
-      applyTorsoInference(joints: &next, now: frameTimestamp)
+      applyTorsoInference(joints: &next, now: frameTimestamp, pushupFloorModeActive: pushupFloorModeActive)
     }
 
     for jointName in PushlyJointName.allCases {
@@ -462,21 +474,28 @@ final class TemporalJointTracker {
     name: PushlyJointName,
     fallbackPoint: CGPoint? = nil,
     now: TimeInterval,
-    dt: TimeInterval
+    dt: TimeInterval,
+    pushupFloorModeActive: Bool
   ) -> TrackedJoint? {
     guard let previous = stateByJoint[name] else {
       return nil
     }
 
     let ageSinceMeasured = now - previous.lastMeasuredTime
-    guard ageSinceMeasured <= config.tracker.missingJointPredictionMaxAge else {
+    let predictionMaxAge = config.tracker.missingJointPredictionMaxAge
+      * (pushupFloorModeActive ? config.tracker.pushupMissingJointPredictionMaxAgeScale : 1)
+    guard ageSinceMeasured <= predictionMaxAge else {
       return nil
     }
 
     let dtClamped = max(1.0 / 120.0, min(dt, 1.0 / 8.0))
-    let renderStepDecay = Float(exp(-config.tracker.missingJointPredictionConfidenceDecayPerSecond * dtClamped))
-    let visibilityStepDecay = Float(exp(-config.tracker.missingJointPredictionVisibilityDecayPerSecond * dtClamped))
-    let velocityStepDecay = CGFloat(exp(-config.tracker.missingJointPredictionVelocityDampingPerSecond * dtClamped))
+    let decayRateScale = pushupFloorModeActive ? config.tracker.pushupMissingJointPredictionDecayRateScale : 1
+    let velocityDampingRateScale = (pushupFloorModeActive && isPushupDistalJoint(name))
+      ? config.tracker.pushupMissingJointPredictionVelocityDampingRateScale
+      : 1
+    let renderStepDecay = Float(exp(-(config.tracker.missingJointPredictionConfidenceDecayPerSecond * decayRateScale) * dtClamped))
+    let visibilityStepDecay = Float(exp(-(config.tracker.missingJointPredictionVisibilityDecayPerSecond * decayRateScale) * dtClamped))
+    let velocityStepDecay = CGFloat(exp(-(config.tracker.missingJointPredictionVelocityDampingPerSecond * velocityDampingRateScale) * dtClamped))
 
     let predictedStep = CGPoint(
       x: previous.smoothedPosition.x + previous.velocity.dx * CGFloat(dtClamped),
@@ -486,6 +505,7 @@ final class TemporalJointTracker {
       point: predictedStep,
       around: previous.lastMeasuredPosition,
       maxDistance: config.tracker.missingJointPredictionMaxExtrapolation
+        * (pushupFloorModeActive ? config.tracker.pushupMissingJointPredictionMaxExtrapolationScale : 1)
     )
     let dampedVelocity = previous.velocity * velocityStepDecay
     let renderConfidence = max(0.04, previous.renderConfidence * renderStepDecay)
@@ -684,23 +704,29 @@ final class TemporalJointTracker {
     return clamp01(projected)
   }
 
-  private func applyKinematicInference(joints: inout [PushlyJointName: TrackedJoint], now: TimeInterval) {
+  private func applyKinematicInference(
+    joints: inout [PushlyJointName: TrackedJoint],
+    now: TimeInterval,
+    pushupFloorModeActive: Bool
+  ) {
     for link in lowerBodyLinks {
-      inferLinkedJoint(link, joints: &joints, now: now)
+      inferLinkedJoint(link, joints: &joints, now: now, pushupFloorModeActive: pushupFloorModeActive)
     }
     inferArmJoint(
       shoulder: .leftShoulder,
       elbow: .leftElbow,
       wrist: .leftWrist,
       joints: &joints,
-      now: now
+      now: now,
+      pushupFloorModeActive: pushupFloorModeActive
     )
     inferArmJoint(
       shoulder: .rightShoulder,
       elbow: .rightElbow,
       wrist: .rightWrist,
       joints: &joints,
-      now: now
+      now: now,
+      pushupFloorModeActive: pushupFloorModeActive
     )
   }
 
@@ -709,10 +735,17 @@ final class TemporalJointTracker {
     elbow: PushlyJointName,
     wrist: PushlyJointName,
     joints: inout [PushlyJointName: TrackedJoint],
-    now: TimeInterval
+    now: TimeInterval,
+    pushupFloorModeActive: Bool
   ) {
     guard let shoulderJoint = joints[shoulder], shoulderJoint.isRenderable,
           let elbowJoint = joints[elbow], elbowJoint.isRenderable else {
+      return
+    }
+    if pushupFloorModeActive,
+       let existing = joints[wrist],
+       existing.sourceType == .inferred,
+       existing.renderConfidence >= config.tracker.pushupTorsoInferencePreserveConfidenceMin {
       return
     }
     guard var wristJoint = joints[wrist], wristJoint.sourceType == .missing || wristJoint.renderConfidence < 0.08 else {
@@ -735,7 +768,9 @@ final class TemporalJointTracker {
     wristJoint.velocity = .zero
     wristJoint.rawConfidence = 0
     wristJoint.renderConfidence = min(shoulderJoint.renderConfidence, elbowJoint.renderConfidence) * 0.5
-    wristJoint.logicConfidence = max(0.18, wristJoint.renderConfidence * 0.42)
+    wristJoint.logicConfidence = pushupFloorModeActive
+      ? min(0.17, max(0.12, wristJoint.renderConfidence * 0.3))
+      : max(0.18, wristJoint.renderConfidence * 0.42)
     wristJoint.visibility = min(shoulderJoint.visibility, elbowJoint.visibility) * 0.6
     wristJoint.presence = min(shoulderJoint.presence, elbowJoint.presence) * 0.6
     wristJoint.inFrame = true
@@ -795,8 +830,14 @@ final class TemporalJointTracker {
     }
   }
 
-  private func applyTorsoInference(joints: inout [PushlyJointName: TrackedJoint], now: TimeInterval) {
+  private func applyTorsoInference(
+    joints: inout [PushlyJointName: TrackedJoint],
+    now: TimeInterval,
+    pushupFloorModeActive: Bool
+  ) {
     guard let torsoFrame else { return }
+    let torsoOffsetMaxAge = config.tracker.torsoOffsetMaxAge
+      * (pushupFloorModeActive ? config.tracker.pushupTorsoOffsetMaxAgeScale : 1)
 
     let candidates: [PushlyJointName] = [
       .leftHip, .rightHip,
@@ -809,7 +850,7 @@ final class TemporalJointTracker {
     for name in candidates {
       guard needsKinematicLock(for: joints[name]) else { continue }
       guard let offset = torsoOffsetsByJoint[name],
-            now - offset.timestamp <= config.tracker.torsoOffsetMaxAge else {
+            now - offset.timestamp <= torsoOffsetMaxAge else {
         continue
       }
 
@@ -835,7 +876,9 @@ final class TemporalJointTracker {
         velocity: .zero,
         rawConfidence: 0,
         renderConfidence: inferredConfidence,
-        logicConfidence: max(0.18, inferredConfidence * 0.38),
+        logicConfidence: pushupFloorModeActive && isPushupDistalJoint(name)
+          ? min(0.17, max(0.12, inferredConfidence * 0.3))
+          : max(0.18, inferredConfidence * 0.38),
         visibility: inferredConfidence * 0.62,
         presence: inferredConfidence * 0.62,
         inFrame: true,
@@ -943,8 +986,15 @@ final class TemporalJointTracker {
   private func inferLinkedJoint(
     _ link: KinematicLink,
     joints: inout [PushlyJointName: TrackedJoint],
-    now: TimeInterval
+    now: TimeInterval,
+    pushupFloorModeActive: Bool
   ) {
+    if pushupFloorModeActive,
+       let existing = joints[link.child],
+       existing.sourceType == .inferred,
+       existing.renderConfidence >= config.tracker.pushupTorsoInferencePreserveConfidenceMin {
+      return
+    }
     guard needsKinematicLock(for: joints[link.child]) else {
       return
     }
@@ -954,7 +1004,9 @@ final class TemporalJointTracker {
       return
     }
     guard let offset = lockedOffsetsByJoint[link.child],
-          now - offset.timestamp <= config.tracker.kinematicLowerBodyMaxAge else {
+          now - offset.timestamp <= config.tracker.kinematicLowerBodyMaxAge
+            * (pushupFloorModeActive ? config.tracker.pushupKinematicLowerBodyMaxAgeScale : 1)
+    else {
       return
     }
 
@@ -966,6 +1018,13 @@ final class TemporalJointTracker {
     )
 
     let inferredConfidence = min(parentJoint.renderConfidence, offset.confidence) * link.confidenceMultiplier
+    let inferredLogicConfidence: Float = {
+      if pushupFloorModeActive && isPushupDistalJoint(link.child) {
+        return min(0.17, max(0.12, inferredConfidence * 0.3))
+      }
+      return max(0.2, inferredConfidence * 0.42)
+    }()
+
     joints[link.child] = TrackedJoint(
       name: link.child,
       rawPosition: estimated,
@@ -973,7 +1032,7 @@ final class TemporalJointTracker {
       velocity: .zero,
       rawConfidence: 0,
       renderConfidence: max(config.tracker.inferenceConfidenceFloor, inferredConfidence),
-      logicConfidence: max(0.2, inferredConfidence * 0.42),
+      logicConfidence: inferredLogicConfidence,
       visibility: min(parentJoint.visibility, inferredConfidence),
       presence: min(parentJoint.presence, inferredConfidence),
       inFrame: true,
@@ -994,6 +1053,15 @@ final class TemporalJointTracker {
       return true
     }
     return joint.renderConfidence < config.tracker.confidenceHysteresisExit || !joint.inFrame
+  }
+
+  private func isPushupDistalJoint(_ name: PushlyJointName) -> Bool {
+    switch name {
+    case .leftWrist, .rightWrist, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot:
+      return true
+    default:
+      return false
+    }
   }
 
   private func clamp01(_ point: CGPoint) -> CGPoint {

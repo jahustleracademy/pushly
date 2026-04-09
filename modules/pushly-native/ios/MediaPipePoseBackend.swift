@@ -21,18 +21,28 @@ final class MediaPipePoseBackend: PoseBackend {
   private let diagnostics: PoseDiagnostics?
   private let poseLandmarker: PoseLandmarker?
   private let handLandmarker: HandLandmarker?
+  private let availabilityDiagnostics: MediaPipeAvailabilityDiagnostics
   private var tooCloseLock = TooCloseLockState()
   private var segmentationPresenceEMA: Double = 0
 
   var kind: PoseBackendKind { .mediapipe }
   var isAvailable: Bool { poseLandmarker != nil }
+  var mediaPipeAvailabilityDiagnostics: MediaPipeAvailabilityDiagnostics? { availabilityDiagnostics }
 
   init(config: PushlyPoseConfig, diagnostics: PoseDiagnostics? = nil) {
     self.config = config
     self.diagnostics = diagnostics
+    var resolvedModelFound = false
+    var resolvedModelName: String?
+    var resolvedModelPath: String?
+    var resolvedInitStatus = "nil_unknown"
+    var resolvedInitReason: String? = "pose_landmarker_nil_unknown"
 
     if let poseModelSelection = Self.locatePoseModel(config: config) {
+      resolvedModelFound = true
+      resolvedModelName = poseModelSelection.fileName
       let poseModelPath = poseModelSelection.path
+      resolvedModelPath = poseModelPath
       let gpuOptions = PoseLandmarkerOptions()
       gpuOptions.baseOptions.modelAssetPath = poseModelPath
       gpuOptions.baseOptions.delegate = .gpu
@@ -45,6 +55,8 @@ final class MediaPipePoseBackend: PoseBackend {
 
       if let gpuLandmarker = try? PoseLandmarker(options: gpuOptions) {
         poseLandmarker = gpuLandmarker
+        resolvedInitStatus = "gpu_ready"
+        resolvedInitReason = nil
       } else {
         let cpuOptions = PoseLandmarkerOptions()
         cpuOptions.baseOptions.modelAssetPath = poseModelPath
@@ -55,18 +67,43 @@ final class MediaPipePoseBackend: PoseBackend {
         cpuOptions.minPosePresenceConfidence = config.mediaPipe.minPosePresenceConfidence
         cpuOptions.minTrackingConfidence = config.mediaPipe.minPoseTrackingConfidence
         cpuOptions.shouldOutputSegmentationMasks = config.mediaPipe.enablePoseSegmentationPresenceAssist
-        poseLandmarker = try? PoseLandmarker(options: cpuOptions)
+        if let cpuLandmarker = try? PoseLandmarker(options: cpuOptions) {
+          poseLandmarker = cpuLandmarker
+          resolvedInitStatus = "cpu_ready_after_gpu_failed"
+          resolvedInitReason = "gpu_init_failed"
+        } else {
+          poseLandmarker = nil
+          resolvedInitStatus = "failed_gpu_and_cpu"
+          resolvedInitReason = "cpu_init_failed"
+        }
+      }
+
+      if poseLandmarker == nil, resolvedInitReason == nil {
+        resolvedInitStatus = "nil_unknown"
+        resolvedInitReason = "pose_landmarker_nil_unknown"
       }
       diagnostics?.recordBackendInitialized(kind: .mediapipe, available: poseLandmarker != nil, details: [
         "poseModelFound": "true",
         "poseModelName": poseModelSelection.fileName,
         "poseModelPath": poseModelPath,
-        "poseDelegateRequested": "gpu"
+        "poseDelegateRequested": "gpu",
+        "poseLandmarkerInitStatus": resolvedInitStatus,
+        "mediapipeInitReason": resolvedInitReason ?? "none"
       ])
     } else {
       poseLandmarker = nil
+      resolvedInitStatus = "model_missing"
+      resolvedInitReason = "pose_model_missing"
       diagnostics?.recordBackendUnavailable(kind: .mediapipe, reason: "pose_model_missing")
     }
+    availabilityDiagnostics = MediaPipeAvailabilityDiagnostics(
+      compiledWithMediaPipe: true,
+      poseModelFound: resolvedModelFound,
+      poseModelName: resolvedModelName,
+      poseModelPath: resolvedModelPath,
+      poseLandmarkerInitStatus: resolvedInitStatus,
+      mediapipeInitReason: resolvedInitReason
+    )
 
     if config.mediaPipe.enableHandRefinement,
        let handModelPath = Self.locateModel(
@@ -1043,6 +1080,10 @@ final class MediaPipePoseBackend: PoseBackend {
       if let path = bundle.path(forResource: fileName, ofType: fileExtension) {
         return path
       }
+      // Some integrations preserve the Models directory inside the copied bundle.
+      if let path = bundle.path(forResource: fileName, ofType: fileExtension, inDirectory: "Models") {
+        return path
+      }
     }
 
     return nil
@@ -1053,8 +1094,20 @@ final class MediaPipePoseBackend: PoseBackend {
 final class MediaPipePoseBackend: PoseBackend {
   var kind: PoseBackendKind { .mediapipe }
   var isAvailable: Bool { false }
+  var mediaPipeAvailabilityDiagnostics: MediaPipeAvailabilityDiagnostics? {
+    MediaPipeAvailabilityDiagnostics(
+      compiledWithMediaPipe: false,
+      poseModelFound: false,
+      poseModelName: nil,
+      poseModelPath: nil,
+      poseLandmarkerInitStatus: "not_compiled",
+      mediapipeInitReason: "mediapipe_tasks_vision_not_compiled"
+    )
+  }
 
-  init(config: PushlyPoseConfig, diagnostics: PoseDiagnostics? = nil) {}
+  init(config: PushlyPoseConfig, diagnostics: PoseDiagnostics? = nil) {
+    diagnostics?.recordBackendUnavailable(kind: .mediapipe, reason: "mediapipe_tasks_vision_not_compiled")
+  }
 
   func process(frame: PoseFrameInput) throws -> PoseProcessingResult {
     PoseProcessingResult(

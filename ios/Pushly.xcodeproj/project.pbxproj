@@ -7,40 +7,40 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		00866502562858E13EEF00A5 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 222183699F2E555E70F5442E /* ExpoModulesProvider.swift */; };
+		0700ED9B648AA595FBB00B3F /* Pods_PushlyMonitorTarget.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A8621671B57EDC3F2C84E19C /* Pods_PushlyMonitorTarget.framework */; };
 		13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB51A68108700A75B9A /* Images.xcassets */; };
-		1E51570750884C2694167DC4 /* FamilyControls.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 50EBF82409034C2290C468A4 /* FamilyControls.framework */; };
-		1ED6657F48FF46C18E93C337 /* PushlyMonitorTarget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = 67EC6BB6AF56427F8A309EFC /* PushlyMonitorTarget.appex */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		2267267490B95D573CBDC0E9 /* ExpoModulesProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F469EA02B8DAAF2FB3F1E7D /* ExpoModulesProvider.swift */; };
+		2D52CA0E8E11AAD84C9B4770 /* Pods_Pushly.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 20776F37ABE44AAA33487A0F /* Pods_Pushly.framework */; };
+		3689CF84B5B645F5B5F5D0C5 /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2C6B9B7D6E949DA9302343D /* DeviceActivity.framework */; };
 		3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */; };
-		49139B18228A9621125097F0 /* Pods_Pushly.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 319612361CF8A7AB1CBD4CC0 /* Pods_Pushly.framework */; };
-		7FA651CF43423848CD072CBF /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 1D9A2B82AF4AFDF3602161A6 /* PrivacyInfo.xcprivacy */; };
-		820B824B72A672B02AA62DAA /* Pods_PushlyMonitorTarget.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = CAFFF7344B4D5D21678908B9 /* Pods_PushlyMonitorTarget.framework */; };
-		9FADC1CD8CD147A48043A749 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6A3217953A05404EA35067D2 /* Assets.xcassets */; };
-		A631FCDAE79544829C258DDA /* ManagedSettings.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 112E0EDF7FCF4E369C41DABF /* ManagedSettings.framework */; };
+		52973A5F6BFF4765B24C6150 /* PushlyMonitorTarget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = C14FF45543D848BBA378EBCF /* PushlyMonitorTarget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, CodeSignOnCopy, ); }; };
+		9EF3217866AD4859B4A3A54B /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 8BA0B684698F4074A329B12D /* Assets.xcassets */; };
+		B9420DFFC938DAE22134950A /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = C50B56EEE8F0CFC8BE2260AC /* PrivacyInfo.xcprivacy */; };
+		BA25C90D9043481285EE7827 /* ManagedSettings.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 96B7CCECB078436AAFC8F5C2 /* ManagedSettings.framework */; };
 		BB2F792D24A3F905000567C9 /* Expo.plist in Resources */ = {isa = PBXBuildFile; fileRef = BB2F792C24A3F905000567C9 /* Expo.plist */; };
-		E429F20AEE2346A7A5AD5ECD /* PushlyDeviceActivityMonitorExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = 216B1828AEC54EC7B54FB4D7 /* PushlyDeviceActivityMonitorExtension.swift */; };
+		C553FBF1491B411AAFBD2CBA /* FamilyControls.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 3F21CE1891284E2C9F1203E9 /* FamilyControls.framework */; };
+		CDC0E51309ED4FCDA64E752C /* PushlyDeviceActivityMonitorExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47F74A0C4B14189AFCC5FB3 /* PushlyDeviceActivityMonitorExtension.swift */; };
 		F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = F11748412D0307B40044C1D9 /* AppDelegate.swift */; };
-		F7C5289558BA4D349F2395F7 /* DeviceActivity.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A0C58E08C4D540D286A9D27A /* DeviceActivity.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
-		83DA5A81691744EDABB62D0D /* PBXContainerItemProxy */ = {
+		074DB66CF4404C999A41F93F /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
 			proxyType = 1;
-			remoteGlobalIDString = 541FE899749A4810ACABE9A4;
+			remoteGlobalIDString = 9C6E455C5D32485F8263F59D;
 			remoteInfo = PushlyMonitorTarget;
 		};
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		FD69A116752141928F47E765 /* Embed App Extensions */ = {
+		09A7CFCB06FC490A82CC4B89 /* Embed App Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 13;
 			files = (
-				1ED6657F48FF46C18E93C337 /* PushlyMonitorTarget.appex in Embed App Extensions */,
+				52973A5F6BFF4765B24C6150 /* PushlyMonitorTarget.appex in Embed App Extensions */,
 			);
 			name = "Embed App Extensions";
 			runOnlyForDeploymentPostprocessing = 0;
@@ -48,25 +48,25 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
-		112E0EDF7FCF4E369C41DABF /* ManagedSettings.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = ManagedSettings.framework; path = System/Library/Frameworks/ManagedSettings.framework; sourceTree = SDKROOT; };
 		13B07F961A680F5B00A75B9A /* Pushly.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pushly.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		13B07FB51A68108700A75B9A /* Images.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Images.xcassets; path = Pushly/Images.xcassets; sourceTree = "<group>"; };
 		13B07FB61A68108700A75B9A /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; name = Info.plist; path = Pushly/Info.plist; sourceTree = "<group>"; };
-		1D9A2B82AF4AFDF3602161A6 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xml; name = PrivacyInfo.xcprivacy; path = Pushly/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
-		1F469EA02B8DAAF2FB3F1E7D /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Pushly/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
-		216B1828AEC54EC7B54FB4D7 /* PushlyDeviceActivityMonitorExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PushlyDeviceActivityMonitorExtension.swift; path = "../targets/pushly-device-activity-monitor/ios/PushlyDeviceActivityMonitorExtension.swift"; sourceTree = "<group>"; };
-		319612361CF8A7AB1CBD4CC0 /* Pods_Pushly.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Pushly.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		50EBF82409034C2290C468A4 /* FamilyControls.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = FamilyControls.framework; path = System/Library/Frameworks/FamilyControls.framework; sourceTree = SDKROOT; };
-		67EC6BB6AF56427F8A309EFC /* PushlyMonitorTarget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; fileEncoding = 9; includeInIndex = 0; path = PushlyMonitorTarget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
-		6A3217953A05404EA35067D2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = "../targets/pushly-device-activity-monitor/ios/build/Assets.xcassets"; sourceTree = "<group>"; };
-		960D574923E5207B209BDA98 /* Pods-PushlyMonitorTarget.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PushlyMonitorTarget.release.xcconfig"; path = "Target Support Files/Pods-PushlyMonitorTarget/Pods-PushlyMonitorTarget.release.xcconfig"; sourceTree = "<group>"; };
-		9A16A9F648CFB272E0B5447F /* Pods-Pushly.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Pushly.release.xcconfig"; path = "Target Support Files/Pods-Pushly/Pods-Pushly.release.xcconfig"; sourceTree = "<group>"; };
-		A0C58E08C4D540D286A9D27A /* DeviceActivity.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = 9; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
-		A20A80AC94F40846BEA72EEB /* Pods-Pushly.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Pushly.debug.xcconfig"; path = "Target Support Files/Pods-Pushly/Pods-Pushly.debug.xcconfig"; sourceTree = "<group>"; };
+		1F193C81571A80B3E53DA8C6 /* Pods-PushlyMonitorTarget.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PushlyMonitorTarget.debug.xcconfig"; path = "Target Support Files/Pods-PushlyMonitorTarget/Pods-PushlyMonitorTarget.debug.xcconfig"; sourceTree = "<group>"; };
+		20776F37ABE44AAA33487A0F /* Pods_Pushly.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Pushly.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		222183699F2E555E70F5442E /* ExpoModulesProvider.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; name = ExpoModulesProvider.swift; path = "Pods/Target Support Files/Pods-Pushly/ExpoModulesProvider.swift"; sourceTree = "<group>"; };
+		3F21CE1891284E2C9F1203E9 /* FamilyControls.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = FamilyControls.framework; path = System/Library/Frameworks/FamilyControls.framework; sourceTree = SDKROOT; };
+		8BA0B684698F4074A329B12D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = "../targets/pushly-device-activity-monitor/ios/build/Assets.xcassets"; sourceTree = "<group>"; };
+		96B7CCECB078436AAFC8F5C2 /* ManagedSettings.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = ManagedSettings.framework; path = System/Library/Frameworks/ManagedSettings.framework; sourceTree = SDKROOT; };
+		9A4CD535F8A7EA4F2CE012F7 /* Pods-Pushly.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Pushly.release.xcconfig"; path = "Target Support Files/Pods-Pushly/Pods-Pushly.release.xcconfig"; sourceTree = "<group>"; };
+		A2C6B9B7D6E949DA9302343D /* DeviceActivity.framework */ = {isa = PBXFileReference; explicitFileType = undefined; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = wrapper.framework; name = DeviceActivity.framework; path = System/Library/Frameworks/DeviceActivity.framework; sourceTree = SDKROOT; };
+		A8621671B57EDC3F2C84E19C /* Pods_PushlyMonitorTarget.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PushlyMonitorTarget.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = file.storyboard; name = SplashScreen.storyboard; path = Pushly/SplashScreen.storyboard; sourceTree = "<group>"; };
+		B3916CA73ABCD3EB5D7A0B55 /* Pods-Pushly.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Pushly.debug.xcconfig"; path = "Target Support Files/Pods-Pushly/Pods-Pushly.debug.xcconfig"; sourceTree = "<group>"; };
 		BB2F792C24A3F905000567C9 /* Expo.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Expo.plist; sourceTree = "<group>"; };
-		C66F5E50521396C6401F9E97 /* Pods-PushlyMonitorTarget.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PushlyMonitorTarget.debug.xcconfig"; path = "Target Support Files/Pods-PushlyMonitorTarget/Pods-PushlyMonitorTarget.debug.xcconfig"; sourceTree = "<group>"; };
-		CAFFF7344B4D5D21678908B9 /* Pods_PushlyMonitorTarget.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_PushlyMonitorTarget.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		C14FF45543D848BBA378EBCF /* PushlyMonitorTarget.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; fileEncoding = undefined; includeInIndex = 0; lastKnownFileType = undefined; name = PushlyMonitorTarget.appex; path = PushlyMonitorTarget.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C50B56EEE8F0CFC8BE2260AC /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; includeInIndex = 1; name = PrivacyInfo.xcprivacy; path = Pushly/PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		D47F74A0C4B14189AFCC5FB3 /* PushlyDeviceActivityMonitorExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PushlyDeviceActivityMonitorExtension.swift; path = "../targets/pushly-device-activity-monitor/ios/PushlyDeviceActivityMonitorExtension.swift"; sourceTree = "<group>"; };
+		D52B69445E73A97032D4DF0F /* Pods-PushlyMonitorTarget.release.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-PushlyMonitorTarget.release.xcconfig"; path = "Target Support Files/Pods-PushlyMonitorTarget/Pods-PushlyMonitorTarget.release.xcconfig"; sourceTree = "<group>"; };
 		ED297162215061F000B7C4FE /* JavaScriptCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = JavaScriptCore.framework; path = System/Library/Frameworks/JavaScriptCore.framework; sourceTree = SDKROOT; };
 		F11748412D0307B40044C1D9 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = AppDelegate.swift; path = Pushly/AppDelegate.swift; sourceTree = "<group>"; };
 		F11748442D0722820044C1D9 /* Pushly-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = "Pushly-Bridging-Header.h"; path = "Pushly/Pushly-Bridging-Header.h"; sourceTree = "<group>"; };
@@ -77,32 +77,24 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				49139B18228A9621125097F0 /* Pods_Pushly.framework in Frameworks */,
+				2D52CA0E8E11AAD84C9B4770 /* Pods_Pushly.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		D086B65EED8D4AA2A9A4A05E /* Frameworks */ = {
+		EF43E3316EAE414589522A6C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				F7C5289558BA4D349F2395F7 /* DeviceActivity.framework in Frameworks */,
-				A631FCDAE79544829C258DDA /* ManagedSettings.framework in Frameworks */,
-				1E51570750884C2694167DC4 /* FamilyControls.framework in Frameworks */,
-				820B824B72A672B02AA62DAA /* Pods_PushlyMonitorTarget.framework in Frameworks */,
+				3689CF84B5B645F5B5F5D0C5 /* DeviceActivity.framework in Frameworks */,
+				BA25C90D9043481285EE7827 /* ManagedSettings.framework in Frameworks */,
+				C553FBF1491B411AAFBD2CBA /* FamilyControls.framework in Frameworks */,
+				0700ED9B648AA595FBB00B3F /* Pods_PushlyMonitorTarget.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		083D3F463D8327D76023841C /* ExpoModulesProviders */ = {
-			isa = PBXGroup;
-			children = (
-				4B79945C6C3A283C7C59A518 /* Pushly */,
-			);
-			name = ExpoModulesProviders;
-			sourceTree = "<group>";
-		};
 		13B07FAE1A68108700A75B9A /* Pushly */ = {
 			isa = PBXGroup;
 			children = (
@@ -112,39 +104,46 @@
 				13B07FB51A68108700A75B9A /* Images.xcassets */,
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				AA286B85B6C04FC6940260E9 /* SplashScreen.storyboard */,
-				1D9A2B82AF4AFDF3602161A6 /* PrivacyInfo.xcprivacy */,
+				C50B56EEE8F0CFC8BE2260AC /* PrivacyInfo.xcprivacy */,
 			);
 			name = Pushly;
+			sourceTree = "<group>";
+		};
+		160C7E9F88C34CD196978B18 /* expo:targets */ = {
+			isa = PBXGroup;
+			children = (
+				A4AEB4A1138541B1BB6BD96F /* Pushly Monitor */,
+			);
+			name = "expo:targets";
 			sourceTree = "<group>";
 		};
 		2D16E6871FA4F8E400B85C8A /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				ED297162215061F000B7C4FE /* JavaScriptCore.framework */,
-				A0C58E08C4D540D286A9D27A /* DeviceActivity.framework */,
-				112E0EDF7FCF4E369C41DABF /* ManagedSettings.framework */,
-				50EBF82409034C2290C468A4 /* FamilyControls.framework */,
-				319612361CF8A7AB1CBD4CC0 /* Pods_Pushly.framework */,
-				CAFFF7344B4D5D21678908B9 /* Pods_PushlyMonitorTarget.framework */,
+				A2C6B9B7D6E949DA9302343D /* DeviceActivity.framework */,
+				96B7CCECB078436AAFC8F5C2 /* ManagedSettings.framework */,
+				3F21CE1891284E2C9F1203E9 /* FamilyControls.framework */,
+				20776F37ABE44AAA33487A0F /* Pods_Pushly.framework */,
+				A8621671B57EDC3F2C84E19C /* Pods_PushlyMonitorTarget.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
 		};
-		4B79945C6C3A283C7C59A518 /* Pushly */ = {
+		48F9867359090617353AD09F /* ExpoModulesProviders */ = {
 			isa = PBXGroup;
 			children = (
-				1F469EA02B8DAAF2FB3F1E7D /* ExpoModulesProvider.swift */,
+				63FCADECCBE2F2BE195C02B1 /* Pushly */,
 			);
-			name = Pushly;
+			name = ExpoModulesProviders;
 			sourceTree = "<group>";
 		};
-		7E81481A150E44239F3C90A5 /* Pushly Monitor */ = {
+		63FCADECCBE2F2BE195C02B1 /* Pushly */ = {
 			isa = PBXGroup;
 			children = (
-				216B1828AEC54EC7B54FB4D7 /* PushlyDeviceActivityMonitorExtension.swift */,
-				6A3217953A05404EA35067D2 /* Assets.xcassets */,
+				222183699F2E555E70F5442E /* ExpoModulesProvider.swift */,
 			);
-			name = "Pushly Monitor";
+			name = Pushly;
 			sourceTree = "<group>";
 		};
 		832341AE1AAA6A7D00B99B32 /* Libraries */ = {
@@ -161,9 +160,9 @@
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
-				E2813F88E68340DC912DECAF /* expo:targets */,
-				E8385513C339B9CCF16D6511 /* Pods */,
-				083D3F463D8327D76023841C /* ExpoModulesProviders */,
+				160C7E9F88C34CD196978B18 /* expo:targets */,
+				8B44ABBAB5A678760E6BE06B /* Pods */,
+				48F9867359090617353AD09F /* ExpoModulesProviders */,
 			);
 			indentWidth = 2;
 			sourceTree = "<group>";
@@ -174,9 +173,30 @@
 			isa = PBXGroup;
 			children = (
 				13B07F961A680F5B00A75B9A /* Pushly.app */,
-				67EC6BB6AF56427F8A309EFC /* PushlyMonitorTarget.appex */,
+				C14FF45543D848BBA378EBCF /* PushlyMonitorTarget.appex */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		8B44ABBAB5A678760E6BE06B /* Pods */ = {
+			isa = PBXGroup;
+			children = (
+				B3916CA73ABCD3EB5D7A0B55 /* Pods-Pushly.debug.xcconfig */,
+				9A4CD535F8A7EA4F2CE012F7 /* Pods-Pushly.release.xcconfig */,
+				1F193C81571A80B3E53DA8C6 /* Pods-PushlyMonitorTarget.debug.xcconfig */,
+				D52B69445E73A97032D4DF0F /* Pods-PushlyMonitorTarget.release.xcconfig */,
+			);
+			name = Pods;
+			path = Pods;
+			sourceTree = "<group>";
+		};
+		A4AEB4A1138541B1BB6BD96F /* Pushly Monitor */ = {
+			isa = PBXGroup;
+			children = (
+				D47F74A0C4B14189AFCC5FB3 /* PushlyDeviceActivityMonitorExtension.swift */,
+				8BA0B684698F4074A329B12D /* Assets.xcassets */,
+			);
+			name = "Pushly Monitor";
 			sourceTree = "<group>";
 		};
 		BB2F792B24A3F905000567C9 /* Supporting */ = {
@@ -188,25 +208,6 @@
 			path = Pushly/Supporting;
 			sourceTree = "<group>";
 		};
-		E2813F88E68340DC912DECAF /* expo:targets */ = {
-			isa = PBXGroup;
-			children = (
-				7E81481A150E44239F3C90A5 /* Pushly Monitor */,
-			);
-			name = "expo:targets";
-			sourceTree = "<group>";
-		};
-		E8385513C339B9CCF16D6511 /* Pods */ = {
-			isa = PBXGroup;
-			children = (
-				A20A80AC94F40846BEA72EEB /* Pods-Pushly.debug.xcconfig */,
-				9A16A9F648CFB272E0B5447F /* Pods-Pushly.release.xcconfig */,
-				C66F5E50521396C6401F9E97 /* Pods-PushlyMonitorTarget.debug.xcconfig */,
-				960D574923E5207B209BDA98 /* Pods-PushlyMonitorTarget.release.xcconfig */,
-			);
-			path = Pods;
-			sourceTree = "<group>";
-		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -215,33 +216,33 @@
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "Pushly" */;
 			buildPhases = (
 				08A4A3CD28434E44B6B9DE2E /* [CP] Check Pods Manifest.lock */,
-				501C34AE2FDF6218BF1C56F9 /* [Expo] Configure project */,
+				615B32015D3A5F5F6185EA0F /* [Expo] Configure project */,
 				13B07F871A680F5B00A75B9A /* Sources */,
 				13B07F8C1A680F5B00A75B9A /* Frameworks */,
 				13B07F8E1A680F5B00A75B9A /* Resources */,
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				800E24972A6A228C8D4807E9 /* [CP] Copy Pods Resources */,
-				FD69A116752141928F47E765 /* Embed App Extensions */,
-				99E047AE65FFA277BE5F1DE2 /* [CP] Embed Pods Frameworks */,
+				09A7CFCB06FC490A82CC4B89 /* Embed App Extensions */,
+				D1E6A7D3B425E9E5EA8E1AB6 /* [CP] Embed Pods Frameworks */,
 			);
 			buildRules = (
 			);
 			dependencies = (
-				2E39E49FB9D4455E98F2D98A /* PBXTargetDependency */,
+				EC550BF83DAF4475B18442E4 /* PBXTargetDependency */,
 			);
 			name = Pushly;
 			productName = Pushly;
 			productReference = 13B07F961A680F5B00A75B9A /* Pushly.app */;
 			productType = "com.apple.product-type.application";
 		};
-		541FE899749A4810ACABE9A4 /* PushlyMonitorTarget */ = {
+		9C6E455C5D32485F8263F59D /* PushlyMonitorTarget */ = {
 			isa = PBXNativeTarget;
-			buildConfigurationList = 64D6727763C14C94A6CF402F /* Build configuration list for PBXNativeTarget "PushlyMonitorTarget" */;
+			buildConfigurationList = 88DF9BEEAFB64BE69A43BFBB /* Build configuration list for PBXNativeTarget "PushlyMonitorTarget" */;
 			buildPhases = (
-				84BDC87D0357C43F799783A4 /* [CP] Check Pods Manifest.lock */,
-				B330BCF2E1E34763BDC70560 /* Sources */,
-				D086B65EED8D4AA2A9A4A05E /* Frameworks */,
-				5B26535A7F994B3ABE80B80B /* Resources */,
+				E81F40F06DE5CBE397519B1B /* [CP] Check Pods Manifest.lock */,
+				2D87C5CF6CE44D00B244554F /* Sources */,
+				EF43E3316EAE414589522A6C /* Frameworks */,
+				89E7137CCBC74AC9970100B1 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -249,7 +250,7 @@
 			);
 			name = PushlyMonitorTarget;
 			productName = PushlyMonitorTarget;
-			productReference = 67EC6BB6AF56427F8A309EFC /* PushlyMonitorTarget.appex */;
+			productReference = C14FF45543D848BBA378EBCF /* PushlyMonitorTarget.appex */;
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
@@ -261,7 +262,13 @@
 				LastUpgradeCheck = 1130;
 				TargetAttributes = {
 					13B07F861A680F5B00A75B9A = {
+						DevelopmentTeam = 7T3ZX87575;
 						LastSwiftMigration = 1250;
+						ProvisioningStyle = Automatic;
+					};
+					9C6E455C5D32485F8263F59D = {
+						DevelopmentTeam = 7T3ZX87575;
+						ProvisioningStyle = Automatic;
 					};
 				};
 			};
@@ -279,7 +286,7 @@
 			projectRoot = "";
 			targets = (
 				13B07F861A680F5B00A75B9A /* Pushly */,
-				541FE899749A4810ACABE9A4 /* PushlyMonitorTarget */,
+				9C6E455C5D32485F8263F59D /* PushlyMonitorTarget */,
 			);
 		};
 /* End PBXProject section */
@@ -292,15 +299,15 @@
 				BB2F792D24A3F905000567C9 /* Expo.plist in Resources */,
 				13B07FBF1A68108700A75B9A /* Images.xcassets in Resources */,
 				3E461D99554A48A4959DE609 /* SplashScreen.storyboard in Resources */,
-				7FA651CF43423848CD072CBF /* PrivacyInfo.xcprivacy in Resources */,
+				B9420DFFC938DAE22134950A /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		5B26535A7F994B3ABE80B80B /* Resources */ = {
+		89E7137CCBC74AC9970100B1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				9FADC1CD8CD147A48043A749 /* Assets.xcassets in Resources */,
+				9EF3217866AD4859B4A3A54B /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -346,7 +353,7 @@
 			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
 			showEnvVarsInLog = 0;
 		};
-		501C34AE2FDF6218BF1C56F9 /* [Expo] Configure project */ = {
+		615B32015D3A5F5F6185EA0F /* [Expo] Configure project */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
@@ -406,29 +413,7 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Pushly/Pods-Pushly-resources.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
-		84BDC87D0357C43F799783A4 /* [CP] Check Pods Manifest.lock */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
-				"${PODS_ROOT}/Manifest.lock",
-			);
-			name = "[CP] Check Pods Manifest.lock";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"$(DERIVED_FILE_DIR)/Pods-PushlyMonitorTarget-checkManifestLockResult.txt",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
-			showEnvVarsInLog = 0;
-		};
-		99E047AE65FFA277BE5F1DE2 /* [CP] Embed Pods Frameworks */ = {
+		D1E6A7D3B425E9E5EA8E1AB6 /* [CP] Embed Pods Frameworks */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -450,6 +435,28 @@
 			shellScript = "\"${PODS_ROOT}/Target Support Files/Pods-Pushly/Pods-Pushly-frameworks.sh\"\n";
 			showEnvVarsInLog = 0;
 		};
+		E81F40F06DE5CBE397519B1B /* [CP] Check Pods Manifest.lock */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"${PODS_PODFILE_DIR_PATH}/Podfile.lock",
+				"${PODS_ROOT}/Manifest.lock",
+			);
+			name = "[CP] Check Pods Manifest.lock";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/Pods-PushlyMonitorTarget-checkManifestLockResult.txt",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "diff \"${PODS_PODFILE_DIR_PATH}/Podfile.lock\" \"${PODS_ROOT}/Manifest.lock\" > /dev/null\nif [ $? != 0 ] ; then\n    # print error to STDERR\n    echo \"error: The sandbox is not in sync with the Podfile.lock. Run 'pod install' or update your CocoaPods installation.\" >&2\n    exit 1\nfi\n# This output is used by Xcode 'outputs' to avoid re-running this script phase.\necho \"SUCCESS\" > \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+			showEnvVarsInLog = 0;
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -458,61 +465,38 @@
 			buildActionMask = 2147483647;
 			files = (
 				F11748422D0307B40044C1D9 /* AppDelegate.swift in Sources */,
-				2267267490B95D573CBDC0E9 /* ExpoModulesProvider.swift in Sources */,
+				00866502562858E13EEF00A5 /* ExpoModulesProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
-		B330BCF2E1E34763BDC70560 /* Sources */ = {
+		2D87C5CF6CE44D00B244554F /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E429F20AEE2346A7A5AD5ECD /* PushlyDeviceActivityMonitorExtension.swift in Sources */,
+				CDC0E51309ED4FCDA64E752C /* PushlyDeviceActivityMonitorExtension.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
-		2E39E49FB9D4455E98F2D98A /* PBXTargetDependency */ = {
+		EC550BF83DAF4475B18442E4 /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
-			target = 541FE899749A4810ACABE9A4 /* PushlyMonitorTarget */;
-			targetProxy = 83DA5A81691744EDABB62D0D /* PBXContainerItemProxy */;
+			target = 9C6E455C5D32485F8263F59D /* PushlyMonitorTarget */;
+			targetProxy = 074DB66CF4404C999A41F93F /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		09FC033A9AE148FFAFC352F9 /* Release */ = {
-			isa = XCBuildConfiguration;
-			baseConfigurationReference = 960D574923E5207B209BDA98 /* Pods-PushlyMonitorTarget.release.xcconfig */;
-			buildSettings = {
-				CLANG_ENABLE_MODULES = YES;
-				CODE_SIGN_ENTITLEMENTS = "../targets/pushly-device-activity-monitor/ios/build/generated.entitlements";
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 7T3ZX87575;
-				INFOPLIST_FILE = "../targets/pushly-device-activity-monitor/ios/build/Info.plist";
-				INFOPLIST_KEY_CFBundleDisplayName = "Pushly Monitor";
-				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@executable_path/../../Frameworks",
-				);
-				MARKETING_VERSION = 0.1.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PRODUCT_BUNDLE_IDENTIFIER = com.artur.pushly.monitor;
-				PRODUCT_NAME = PushlyMonitorTarget;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = 1;
-			};
-			name = Release;
-		};
 		13B07F941A680F5B00A75B9A /* Debug */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = A20A80AC94F40846BEA72EEB /* Pods-Pushly.debug.xcconfig */;
+			baseConfigurationReference = B3916CA73ABCD3EB5D7A0B55 /* Pods-Pushly.debug.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Pushly/Pushly.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7T3ZX87575;
 				ENABLE_BITCODE = NO;
@@ -545,11 +529,13 @@
 		};
 		13B07F951A680F5B00A75B9A /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = 9A16A9F648CFB272E0B5447F /* Pods-Pushly.release.xcconfig */;
+			baseConfigurationReference = 9A4CD535F8A7EA4F2CE012F7 /* Pods-Pushly.release.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = Pushly/Pushly.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7T3ZX87575;
 				INFOPLIST_FILE = Pushly/Info.plist;
@@ -574,18 +560,16 @@
 			};
 			name = Release;
 		};
-		2B3A0C162F844D3882FBE75A /* Debug */ = {
+		216DA904342E451A8A75FBF5 /* Release */ = {
 			isa = XCBuildConfiguration;
-			baseConfigurationReference = C66F5E50521396C6401F9E97 /* Pods-PushlyMonitorTarget.debug.xcconfig */;
+			baseConfigurationReference = D52B69445E73A97032D4DF0F /* Pods-PushlyMonitorTarget.release.xcconfig */;
 			buildSettings = {
 				CLANG_ENABLE_MODULES = YES;
 				CODE_SIGN_ENTITLEMENTS = "../targets/pushly-device-activity-monitor/ios/build/generated.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 7T3ZX87575;
-				GCC_PREPROCESSOR_DEFINITIONS = (
-					"DEBUG=1",
-					"$(inherited)",
-				);
 				INFOPLIST_FILE = "../targets/pushly-device-activity-monitor/ios/build/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = "Pushly Monitor";
 				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
@@ -595,13 +579,13 @@
 					"@executable_path/../../Frameworks",
 				);
 				MARKETING_VERSION = 0.1.0;
-				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = com.artur.pushly.monitor;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.artur.pushly.device-activity-monitor";
 				PRODUCT_NAME = PushlyMonitorTarget;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
-			name = Debug;
+			name = Release;
 		};
 		83CBBA201A601CBA00E9B192 /* Debug */ = {
 			isa = XCBuildConfiguration;
@@ -747,6 +731,37 @@
 			};
 			name = Release;
 		};
+		CF1C206863A447F5B9CDFDD2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 1F193C81571A80B3E53DA8C6 /* Pods-PushlyMonitorTarget.debug.xcconfig */;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = "../targets/pushly-device-activity-monitor/ios/build/generated.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 7T3ZX87575;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				INFOPLIST_FILE = "../targets/pushly-device-activity-monitor/ios/build/Info.plist";
+				INFOPLIST_KEY_CFBundleDisplayName = "Pushly Monitor";
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.1.0;
+				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
+				PRODUCT_BUNDLE_IDENTIFIER = "com.artur.pushly.device-activity-monitor";
+				PRODUCT_NAME = PushlyMonitorTarget;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -759,20 +774,20 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
-		64D6727763C14C94A6CF402F /* Build configuration list for PBXNativeTarget "PushlyMonitorTarget" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				2B3A0C162F844D3882FBE75A /* Debug */,
-				09FC033A9AE148FFAFC352F9 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
 		83CBB9FA1A601CBA00E9B192 /* Build configuration list for PBXProject "Pushly" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
 				83CBBA201A601CBA00E9B192 /* Debug */,
 				83CBBA211A601CBA00E9B192 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		88DF9BEEAFB64BE69A43BFBB /* Build configuration list for PBXNativeTarget "PushlyMonitorTarget" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CF1C206863A447F5B9CDFDD2 /* Debug */,
+				216DA904342E451A8A75FBF5 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

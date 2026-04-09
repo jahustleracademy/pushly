@@ -29,6 +29,9 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         'Pushly may save premium onboarding and workout visuals to your library when you choose to export them.'
     }
   },
+  android: {
+    package: 'com.artur.pushly'
+  },
   web: {
     favicon: './assets/images/favicon.png'
   },

@@ -73,24 +73,78 @@ target 'Pushly' do
     end
     # [expo-targets-resource-bundle-signing-end]
 
-    # MediaPipeTasksVision/MediaPipeTasksCommon CocoaPods metadata can emit `-lMediaPipe...`
-    # in this static-framework setup, which fails to resolve. Force framework-style linking.
-    pods_pushly_xcconfigs = Dir.glob(File.join(__dir__, 'Pods', 'Target Support Files', 'Pods-Pushly', 'Pods-Pushly.*.xcconfig'))
-    pods_pushly_xcconfigs.each do |xcconfig_path|
+    # Normalize MediaPipe linker flags to framework-style linkage.
+    installer.pods_project.targets.each do |target|
+      next unless target.name == 'Pods-Pushly'
+
+      target.build_configurations.each do |config|
+        ldflags = config.build_settings['OTHER_LDFLAGS']
+        next if ldflags.nil?
+
+        normalized = ldflags.is_a?(String) ? ldflags.split(/\s+/).reject(&:empty?) : Array(ldflags).dup
+        rebuilt = []
+        i = 0
+        while i < normalized.length
+          token = normalized[i]
+          next_token = normalized[i + 1]
+
+          if token == '-lMediaPipeTasksCommon' || token == '-l"MediaPipeTasksCommon"'
+            rebuilt << '-framework'
+            rebuilt << 'MediaPipeTasksCommon'
+            i += 1
+            next
+          end
+          if token == '-lMediaPipeTasksVision' || token == '-l"MediaPipeTasksVision"'
+            rebuilt << '-framework'
+            rebuilt << 'MediaPipeTasksVision'
+            i += 1
+            next
+          end
+          if token == '-l' && next_token == 'MediaPipeTasksCommon'
+            rebuilt << '-framework'
+            rebuilt << 'MediaPipeTasksCommon'
+            i += 2
+            next
+          end
+          if token == '-l' && next_token == 'MediaPipeTasksVision'
+            rebuilt << '-framework'
+            rebuilt << 'MediaPipeTasksVision'
+            i += 2
+            next
+          end
+
+          rebuilt << token
+          i += 1
+        end
+
+        config.build_settings['OTHER_LDFLAGS'] = rebuilt
+      end
+    end
+
+    # Pods aggregate xcconfigs can still contain quoted -l flags.
+    Dir.glob(File.join(__dir__, 'Pods', 'Target Support Files', 'Pods-Pushly', 'Pods-Pushly.*.xcconfig')).each do |xcconfig_path|
       next unless File.exist?(xcconfig_path)
 
       contents = File.read(xcconfig_path)
       contents = contents.gsub('-l"MediaPipeTasksCommon"', '-framework "MediaPipeTasksCommon"')
       contents = contents.gsub('-l"MediaPipeTasksVision"', '-framework "MediaPipeTasksVision"')
+      contents = contents.gsub('-lMediaPipeTasksCommon', '-framework "MediaPipeTasksCommon"')
+      contents = contents.gsub('-lMediaPipeTasksVision', '-framework "MediaPipeTasksVision"')
 
-      contents = contents.gsub(/^(FRAMEWORK_SEARCH_PATHS = .*)$/) do |line|
-        if line.include?('${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksCommon')
-          line
-        else
-          %(#{line} "${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksCommon" "${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksVision")
+      lines = contents.lines
+      lines = lines.map do |line|
+        next line unless line.start_with?('FRAMEWORK_SEARCH_PATHS = ')
+
+        expanded = line.dup
+        unless expanded.include?('"${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksCommon"')
+          expanded = expanded.sub(/\n\z/, ' "${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksCommon"' + "\n")
         end
+        unless expanded.include?('"${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksVision"')
+          expanded = expanded.sub(/\n\z/, ' "${PODS_XCFRAMEWORKS_BUILD_DIR}/MediaPipeTasksVision"' + "\n")
+        end
+        expanded
       end
-
+      contents = lines.join
       File.write(xcconfig_path, contents)
     end
   end
