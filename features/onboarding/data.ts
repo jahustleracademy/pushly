@@ -69,21 +69,21 @@ export const DISTRACTING_APP_OPTIONS: AppSelectionOption[] = [
 ];
 
 export const FEELING_OPTIONS: SelectionOption[] = [
-  { id: 'unfocused', label: 'Unfokussiert', description: 'Du springst gedanklich schneller weg.', iconLibrary: 'ion', iconName: 'eye-off-outline' },
-  { id: 'guilty', label: 'Schlechtes Gewissen', description: 'Du merkst, dass wieder Zeit verloren geht.', iconLibrary: 'ion', iconName: 'alert-circle-outline' },
-  { id: 'drained', label: 'Leer und müde', description: 'Energie ist weg, ohne dass etwas besser wurde.', iconLibrary: 'ion', iconName: 'battery-dead-outline' },
-  { id: 'restless', label: 'Innerlich unruhig', description: 'Du willst aufhören, greifst aber doch wieder hin.', iconLibrary: 'ion', iconName: 'flash-outline' },
-  { id: 'behind', label: 'Hinterher', description: 'Du fühlst dich deinen eigenen Zielen gegenüber im Rückstand.', iconLibrary: 'ion', iconName: 'timer-outline' },
-  { id: 'disconnected', label: 'Nicht wirklich da', description: 'Du bist online, aber nicht bei dir.', iconLibrary: 'ion', iconName: 'moon-outline' }
+  { id: 'unfocused', label: 'Unfokussiert', iconLibrary: 'ion', iconName: 'eye-off-outline' },
+  { id: 'guilty', label: 'Schlechtes Gewissen', iconLibrary: 'ion', iconName: 'alert-circle-outline' },
+  { id: 'drained', label: 'Leer und müde', iconLibrary: 'ion', iconName: 'battery-dead-outline' },
+  { id: 'restless', label: 'Innerlich unruhig', iconLibrary: 'ion', iconName: 'flash-outline' },
+  { id: 'behind', label: 'Hinterher', iconLibrary: 'ion', iconName: 'timer-outline' },
+  { id: 'disconnected', label: 'Nicht bei dir', iconLibrary: 'ion', iconName: 'moon-outline' }
 ];
 
 export const ATTEMPT_OPTIONS: SelectionOption[] = [
-  { id: 'screenTime', label: 'Screen-Time-Limits', description: 'Zu leicht wegzuklicken.', iconLibrary: 'ion', iconName: 'timer-outline' },
-  { id: 'deleteApps', label: 'Apps löschen', description: 'Meistens nur kurz wirksam.', iconLibrary: 'ion', iconName: 'trash-outline' },
-  { id: 'grayscale', label: 'Graustufenmodus', description: 'Hilft kurz, verliert aber Wirkung.', iconLibrary: 'ion', iconName: 'contrast-outline' },
-  { id: 'detox', label: 'Digital Detox', description: 'Gut gemeint, aber zu radikal für den Alltag.', iconLibrary: 'ion', iconName: 'leaf-outline' },
-  { id: 'browserOnly', label: 'Nur Browser-Version', description: 'Oft trotzdem derselbe Sog.', iconLibrary: 'ion', iconName: 'globe-outline' },
-  { id: 'nothingWorked', label: 'Eigentlich nichts', description: 'Bisher hat nichts wirklich gehalten.', iconLibrary: 'ion', iconName: 'close-circle-outline' }
+  { id: 'screenTime', label: 'Screen-Time-Limits', iconLibrary: 'ion', iconName: 'timer-outline' },
+  { id: 'deleteApps', label: 'Apps löschen', iconLibrary: 'ion', iconName: 'trash-outline' },
+  { id: 'grayscale', label: 'Graustufenmodus', iconLibrary: 'ion', iconName: 'contrast-outline' },
+  { id: 'detox', label: 'Digital Detox', iconLibrary: 'ion', iconName: 'leaf-outline' },
+  { id: 'browserOnly', label: 'Nur Browser', iconLibrary: 'ion', iconName: 'globe-outline' },
+  { id: 'nothingWorked', label: 'Nichts davon', iconLibrary: 'ion', iconName: 'close-circle-outline' }
 ];
 
 export const PAYWALL_PLAN_OPTIONS: PaywallPlanOption[] = [
@@ -106,20 +106,18 @@ export const PAYWALL_PLAN_OPTIONS: PaywallPlanOption[] = [
 
 export const TRUST_BULLETS = [
   'Echte Reibung statt klickbarer Erinnerungen.',
-  'Klares Ritual: Sperre auf, Liegestütze runter, Fokus zurück.',
-  'Phone-first Design, damit die Hürde genau dort sitzt, wo du sie brauchst.'
+  'Die Sperre greift genau im Impuls.'
 ];
 
 export const SETUP_PREVIEW_STEPS = [
-  'Schutz bleibt über Screen Time aktiv',
-  'Liegestütze entsperren deine Trigger in Echtzeit',
-  'Dein erstes geschütztes Fokus-Setup steht'
+  'Screen-Time-Schutz ist aktiv',
+  'Reps entsperren Trigger in Echtzeit'
 ];
 
 export const AUTH_METHOD_OPTIONS: { id: AuthMethodId; label: string; description: string; icon: string }[] = [
-  { id: 'apple', label: 'Mit Apple fortfahren', description: 'Der cleanste iOS-first Einstieg für Pushly.', icon: 'logo-apple' },
-  { id: 'email', label: 'Mit E-Mail fortfahren', description: 'Falls du Apple später verbinden willst.', icon: 'mail-outline' },
-  { id: 'skip', label: 'Später sichern', description: 'Du kannst den Lock zuerst testen und das Konto danach verbinden.', icon: 'arrow-forward-outline' }
+  { id: 'apple', label: 'Mit Apple fortfahren', description: 'Am schnellsten.', icon: 'logo-apple' },
+  { id: 'email', label: 'Mit E-Mail fortfahren', description: 'Klassisch.', icon: 'mail-outline' },
+  { id: 'skip', label: 'Später sichern', description: 'Jetzt starten.', icon: 'arrow-forward-outline' }
 ];
 
 export const PUSHLY_TRIAL_REP_TARGET = 3;

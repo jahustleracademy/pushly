@@ -15,6 +15,7 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BlurView } from 'expo-blur';
+import * as Haptics from 'expo-haptics';
 import Slider from '@react-native-community/slider';
 import { FontAwesome6, Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
@@ -40,8 +41,6 @@ import {
 import { useOnboardingFlow } from '@/features/onboarding/useOnboardingFlow';
 import type { AppSelectionOption, SelectionOption } from '@/features/onboarding/types';
 import {
-  type CameraAuthorizationStatus,
-  type DeviceActivityMonitoringStatus,
   PushlyCameraView,
   PushlyNative,
   type PoseFrame,
@@ -53,25 +52,47 @@ const toneByStep: Partial<Record<(typeof ONBOARDING_STEP_ORDER)[number], 'accent
 };
 
 const ctaLabelByStep: Record<(typeof ONBOARDING_STEP_ORDER)[number], string> = {
-  hero: 'Pushly starten',
-  quizIntro: 'Analyse starten',
+  hero: 'Start',
+  quizIntro: 'Weiter',
   name: 'Weiter',
   distractingApps: 'Weiter',
   scrollMinutes: 'Weiter',
   feelings: 'Weiter',
   attempts: 'Weiter',
   diagnosis: 'Weiter',
-  reframe: 'So funktioniert es',
-  mechanic: 'Apps schuetzen',
+  reframe: 'Weiter',
+  mechanic: 'Weiter',
   protectApps: 'Weiter',
-  trust: 'Zum Zugang',
-  paywall: 'Weiter mit Pushly',
-  screenTimePermission: 'Weiter zum Kamera-Test',
+  trust: 'Weiter',
+  paywall: 'Weiter',
+  screenTimePermission: 'Weiter',
   cameraCalibration: 'Kamera testen',
   pushUpTrial: 'Weiter',
   rating: 'Weiter',
-  auth: 'Pushly sichern',
-  setupPreview: 'Pushly aktivieren'
+  auth: 'Weiter',
+  setupPreview: 'Schutz starten'
+};
+
+const stepLabelById: Record<(typeof ONBOARDING_STEP_ORDER)[number], string> = {
+  hero: 'Start',
+  quizIntro: 'Analyse',
+  name: 'Profil',
+  distractingApps: 'Trigger',
+  scrollMinutes: 'Zeit',
+  feelings: 'Gefühl',
+  attempts: 'Versuche',
+  diagnosis: 'Diagnose',
+  reframe: 'Reframe',
+  mechanic: 'Mechanik',
+  protectApps: 'Schutz',
+  trust: 'Vertrauen',
+  paywall: 'Zugang',
+  screenTimePermission: 'Berechtigung',
+  cameraCalibration: 'Kamera',
+  pushUpTrial: 'Trial',
+  rating: 'Beweise',
+  auth: 'Login',
+  setupPreview: 'Fertig'
 };
 
 export function OnboardingFlow() {
@@ -83,11 +104,12 @@ export function OnboardingFlow() {
   const [isNativeBusy, setIsNativeBusy] = useState(false);
   const [nativeMessage, setNativeMessage] = useState<string | null>(null);
   const [poseEngineReady, setPoseEngineReady] = useState(Platform.OS !== 'ios');
-  const [cameraStatus, setCameraStatus] = useState<CameraAuthorizationStatus>('not_determined');
-  const [monitoringStatus, setMonitoringStatus] = useState<DeviceActivityMonitoringStatus>('inactive');
   const [latestPoseFrame, setLatestPoseFrame] = useState<PoseFrame | null>(null);
+  const scrollRef = useRef<ScrollView | null>(null);
   const transition = useRef(new Animated.Value(1)).current;
   const backdropPulse = useRef(new Animated.Value(0)).current;
+  const lastHapticAt = useRef(0);
+  const previousTrialPassed = useRef(false);
   const nativeBootstrapDone = useRef(false);
   const styles = createStyles(theme);
   const tone = toneByStep[flow.currentStepId] ?? 'accent';
@@ -118,6 +140,7 @@ export function OnboardingFlow() {
   }, [backdropPulse]);
 
   useEffect(() => {
+    scrollRef.current?.scrollTo({ y: 0, animated: false });
     transition.setValue(0);
 
     Animated.timing(transition, {
@@ -127,6 +150,39 @@ export function OnboardingFlow() {
       useNativeDriver: true
     }).start();
   }, [flow.currentStepId, transition]);
+
+  const triggerHaptic = (
+    kind: 'selection' | 'light' | 'medium' | 'success' = 'selection'
+  ) => {
+    const now = Date.now();
+    if (now - lastHapticAt.current < 70) {
+      return;
+    }
+    lastHapticAt.current = now;
+    if (kind === 'selection') {
+      void Haptics.selectionAsync().catch(() => {});
+      return;
+    }
+    if (kind === 'success') {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      return;
+    }
+    void Haptics.impactAsync(
+      kind === 'light' ? Haptics.ImpactFeedbackStyle.Light : Haptics.ImpactFeedbackStyle.Medium
+    ).catch(() => {});
+  };
+
+  useEffect(() => {
+    if (flow.currentStepId !== 'pushUpTrial') {
+      previousTrialPassed.current = false;
+      return;
+    }
+
+    if (!previousTrialPassed.current && flow.answers.pushUpTestPassed) {
+      triggerHaptic('success');
+    }
+    previousTrialPassed.current = flow.answers.pushUpTestPassed;
+  }, [flow.answers.pushUpTestPassed, flow.currentStepId]);
 
   useEffect(() => {
     if (!flow.hydrated) {
@@ -144,11 +200,9 @@ export function OnboardingFlow() {
     Promise.all([
       PushlyNative.getScreenTimeAuthorizationStatus(),
       PushlyNative.getStoredSelectionSummary(),
-      PushlyNative.isPoseEngineAvailable(),
-      PushlyNative.getCameraAuthorizationStatus(),
-      PushlyNative.getDeviceActivityMonitoringStatus()
+      PushlyNative.isPoseEngineAvailable()
     ])
-      .then(async ([status, selection, poseReady, cameraPermission, monitoring]) => {
+      .then(async ([status, selection, poseReady]) => {
         if (!mounted) {
           return;
         }
@@ -159,15 +213,9 @@ export function OnboardingFlow() {
           flow.setShieldStatus('active');
         }
         setPoseEngineReady(poseReady);
-        setCameraStatus(cameraPermission);
-        if (selection.hasSelection && status === 'approved' && monitoring !== 'active') {
-          const started = await PushlyNative.startDeviceActivityMonitoring();
-          if (mounted) {
-            setMonitoringStatus(started);
-          }
-          return;
+        if (selection.hasSelection && status === 'approved') {
+          await PushlyNative.startDeviceActivityMonitoring();
         }
-        setMonitoringStatus(monitoring);
       })
       .catch(() => {
         if (mounted) {
@@ -201,47 +249,36 @@ export function OnboardingFlow() {
   const recommendedPushUps = getRecommendedPushUps(flow.answers);
   const monthlyHoursLost = getMonthlyHoursLost(flow.answers);
   const leadApp = getAppOption(flow.answers.protectedApps[0] ?? flow.answers.distractingApps[0] ?? 'instagram');
-  const hasProtectedSelection =
-    flow.answers.screenTimeSelection.appCount +
-      flow.answers.screenTimeSelection.categoryCount +
-      flow.answers.screenTimeSelection.webDomainCount >
-    0;
-  const testReadyChecks = [
-    {
-      label: 'Family Controls',
-      isReady: flow.answers.screenTimeStatus === 'approved',
-      detail: flow.answers.screenTimeStatus === 'approved' ? 'Erteilt' : 'Noch offen'
-    },
-    {
-      label: 'App-Auswahl',
-      isReady: hasProtectedSelection,
-      detail: hasProtectedSelection ? 'Gesetzt' : 'Noch leer'
-    },
-    {
-      label: 'Monitoring',
-      isReady: monitoringStatus === 'active',
-      detail: monitoringStatus === 'active' ? 'Aktiv' : 'Inaktiv'
-    },
-    {
-      label: 'Kamera',
-      isReady: cameraStatus === 'authorized',
-      detail: cameraStatus === 'authorized' ? 'Erteilt' : cameraStatus === 'not_determined' ? 'Noch offen' : 'Pruefen'
-    }
-  ];
-
   const handlePrimaryAction = async () => {
     if (!flow.canContinue || isCompleting) {
       return;
     }
 
     if (flow.currentStepId === 'setupPreview') {
+      triggerHaptic('success');
       setIsCompleting(true);
       await flow.complete();
       router.replace(routes.home as never);
       return;
     }
 
+    triggerHaptic('light');
     flow.goNext();
+  };
+
+  const handleBackAction = () => {
+    if (flow.isFirstStep) {
+      return;
+    }
+    triggerHaptic('light');
+    flow.goBack();
+  };
+
+  const withSelectionHaptic = <T extends string>(callback: (id: T) => void) => {
+    return (id: T) => {
+      triggerHaptic('selection');
+      callback(id);
+    };
   };
 
   const handleRequestScreenTime = async () => {
@@ -273,11 +310,9 @@ export function OnboardingFlow() {
       if (summary.hasSelection) {
         const shieldStatus = await PushlyNative.applyStoredShield();
         flow.setShieldStatus(shieldStatus);
-        const deviceStatus = await PushlyNative.startDeviceActivityMonitoring();
-        setMonitoringStatus(deviceStatus);
+        await PushlyNative.startDeviceActivityMonitoring();
       } else {
-        const deviceStatus = await PushlyNative.stopDeviceActivityMonitoring();
-        setMonitoringStatus(deviceStatus);
+        await PushlyNative.stopDeviceActivityMonitoring();
       }
     } catch {
       setNativeMessage('Die native App-Auswahl konnte nicht geoeffnet werden.');
@@ -302,15 +337,19 @@ export function OnboardingFlow() {
         {flow.stepIndex >= 1 ? (
           <FlowHeader
             progress={flow.progress}
-            onBack={flow.goBack}
+            onBack={handleBackAction}
             tone={tone}
             showProgress={flow.stepIndex >= 2}
             canGoBack={!flow.isFirstStep}
+            stepLabel={stepLabelById[flow.currentStepId]}
+            stepIndex={flow.stepIndex}
+            stepCount={flow.stepCount}
           />
         ) : null}
 
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
           <ScrollView
+            ref={scrollRef}
             style={styles.flex}
             contentContainerStyle={[styles.contentContainer, isCameraFirstStep && styles.contentContainerCameraFocus]}
             keyboardShouldPersistTaps="handled"
@@ -328,6 +367,12 @@ export function OnboardingFlow() {
                         inputRange: [0, 1],
                         outputRange: [18, 0]
                       })
+                    },
+                    {
+                      scale: transition.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [0.985, 1]
+                      })
                     }
                   ]
                 }
@@ -339,7 +384,6 @@ export function OnboardingFlow() {
                   theme={theme}
                   leadApp={leadApp}
                   recommendedPushUps={recommendedPushUps}
-                  testReadyChecks={testReadyChecks}
                 />
               ) : null}
 
@@ -358,12 +402,12 @@ export function OnboardingFlow() {
                 <AppSelectionStep
                   styles={styles}
                   theme={theme}
-                  title="Welche Apps fressen bei dir gerade am meisten Fokus?"
-                  subtitle="Wähle bis zu 3 Apps. Genau diese Trigger nutzen wir später als Schutzpunkte."
-                  helper="Je präziser du hier bist, desto härter kann Pushly den Impuls stoppen."
+                  title="Welche Apps ziehen dich rein?"
+                  subtitle="Wähle bis zu 3 Trigger."
+                  helper=""
                   options={DISTRACTING_APP_OPTIONS}
                   selectedIds={flow.answers.distractingApps}
-                  onToggle={flow.toggleDistractingApp}
+                  onToggle={withSelectionHaptic(flow.toggleDistractingApp)}
                 />
               ) : null}
 
@@ -380,11 +424,11 @@ export function OnboardingFlow() {
                 <ListSelectionStep
                   styles={styles}
                   theme={theme}
-                  title={`${flow.answers.name || 'Du'} merkst es ja selbst: Wie fühlt sich dieses Scrollen inzwischen an?`}
-                  subtitle="Wähle bis zu 2 Antworten. Genau hier setzt die Psychologie des Locks an."
+                  title={flow.answers.name ? `Wie fühlst du dich danach, ${flow.answers.name}?` : 'Wie fühlst du dich danach?'}
+                  subtitle="Wähle bis zu 2."
                   options={FEELING_OPTIONS}
                   selectedIds={flow.answers.feelings}
-                  onToggle={flow.toggleFeeling}
+                  onToggle={withSelectionHaptic(flow.toggleFeeling)}
                 />
               ) : null}
 
@@ -392,11 +436,11 @@ export function OnboardingFlow() {
                 <ListSelectionStep
                   styles={styles}
                   theme={theme}
-                  title="Was hast du schon versucht, um das in den Griff zu bekommen?"
-                  subtitle="Pushly soll genau da härter werden, wo andere Lösungen weich werden."
+                  title="Was hast du schon versucht?"
+                  subtitle="Wähle alles, was nicht hielt."
                   options={ATTEMPT_OPTIONS}
                   selectedIds={flow.answers.attempts}
-                  onToggle={flow.toggleAttempt}
+                  onToggle={withSelectionHaptic(flow.toggleAttempt)}
                 />
               ) : null}
 
@@ -414,7 +458,6 @@ export function OnboardingFlow() {
                 <ReframeStep
                   styles={styles}
                   theme={theme}
-                  name={flow.answers.name || 'Du'}
                   minutes={flow.answers.dailyScrollMinutes}
                   pushUps={recommendedPushUps}
                   monthlyHoursLost={monthlyHoursLost}
@@ -434,12 +477,12 @@ export function OnboardingFlow() {
                 <AppSelectionStep
                   styles={styles}
                   theme={theme}
-                  title="Welche Apps soll Pushly zuerst schützen?"
-                  subtitle="Das sind die Apps, die du dir erst nach deinen Liegestützen zurückverdienst."
-                  helper="Die Vorauswahl kommt aus deinen stärksten Triggern. Du kannst sie jetzt noch anpassen."
+                  title="Welche Apps sperren wir zuerst?"
+                  subtitle="Zugriff nur nach Reps."
+                  helper=""
                   options={DISTRACTING_APP_OPTIONS}
                   selectedIds={flow.answers.protectedApps}
-                  onToggle={flow.toggleProtectedApp}
+                  onToggle={withSelectionHaptic(flow.toggleProtectedApp)}
                 />
               ) : null}
 
@@ -452,7 +495,7 @@ export function OnboardingFlow() {
                   styles={styles}
                   theme={theme}
                   selectedPlanId={flow.answers.planId}
-                  onSelectPlan={flow.selectPlan}
+                  onSelectPlan={withSelectionHaptic(flow.selectPlan)}
                 />
               ) : null}
 
@@ -498,7 +541,7 @@ export function OnboardingFlow() {
                   styles={styles}
                   theme={theme}
                   selectedMethod={flow.answers.authMethod}
-                  onSelectMethod={flow.selectAuthMethod}
+                  onSelectMethod={withSelectionHaptic(flow.selectAuthMethod)}
                 />
               ) : null}
 
@@ -538,44 +581,22 @@ function HeroStep({
   styles,
   theme,
   leadApp,
-  recommendedPushUps,
-  testReadyChecks
+  recommendedPushUps
 }: {
   styles: ReturnType<typeof createStyles>;
   theme: ReturnType<typeof useTheme>['theme'];
   leadApp: AppSelectionOption;
   recommendedPushUps: number;
-  testReadyChecks: Array<{ label: string; isReady: boolean; detail: string }>;
 }) {
   return (
     <View style={styles.heroStep}>
       <Image source={require('../../assets/images/logo_header.png')} style={styles.heroLogo} resizeMode="contain" />
 
       <View style={styles.titleBlock}>
-        <Text variant="title">Stoppe Scrollen erst dann,</Text>
-        <Text variant="title">
-          wenn dein <Text style={{ color: theme.colors.accent }}>Körper</Text> den Preis bezahlt.
-        </Text>
+        <Text variant="title">Stoppe den Scroll-Reflex.</Text>
         <Text variant="body" style={{ color: theme.colors.textMuted, marginTop: 12 }}>
-          Pushly sperrt deine stärksten Trigger und gibt sie dir erst nach echten Liegestützen zurück.
+          Erst Reps. Dann Zugriff.
         </Text>
-      </View>
-
-      <View style={styles.testReadyCard}>
-        <Text variant="caption" style={styles.eyebrow}>
-          TEST-READY CHECK
-        </Text>
-        {testReadyChecks.map((item) => (
-          <View key={item.label} style={styles.testReadyRow}>
-            <View style={[styles.testReadyDot, item.isReady ? styles.testReadyDotOn : styles.testReadyDotOff]} />
-            <Text variant="caption" style={{ color: theme.colors.text, flex: 1 }}>
-              {item.label}
-            </Text>
-            <Text variant="caption" style={{ color: item.isReady ? theme.colors.accent : theme.colors.textMuted }}>
-              {item.detail}
-            </Text>
-          </View>
-        ))}
       </View>
 
       <View style={styles.heroVisual}>
@@ -597,9 +618,9 @@ function HeroStep({
         <View style={styles.lockPreviewTopRow}>
             <BrandBubble option={leadApp} size="large" theme={theme} />
             <View style={styles.lockPreviewStatus}>
-              <Text variant="heading">Gesperrt bis Bewegung</Text>
+              <Text variant="heading">Sperre bis Bewegung</Text>
               <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-                {leadApp.label} bleibt zu, bis du deinen Unlock verdient hast.
+                {leadApp.label} bleibt gesperrt.
               </Text>
             </View>
           </View>
@@ -607,9 +628,9 @@ function HeroStep({
           <BlurView intensity={30} tint="dark" style={styles.counterGlass}>
             <Ionicons name="barbell-outline" size={20} color={theme.colors.accent} />
             <View style={styles.counterCopy}>
-              <Text variant="heading">{recommendedPushUps} Liegestütze offen</Text>
+              <Text variant="heading">{recommendedPushUps} Reps bis Zugriff</Text>
               <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-                Keine Ausrede. Kein Wegklicken. Nur Reibung.
+                Klare Sperre. Klare Regel.
               </Text>
             </View>
           </BlurView>
@@ -634,11 +655,11 @@ function QuizIntroStep({
   return (
     <View style={styles.standardStep}>
       <Text variant="caption" style={styles.eyebrow}>
-        PERSONALIISIERTE ANALYSE
+        PERSONALISIERTE ANALYSE
       </Text>
-      <Text variant="title">Wir bauen jetzt deine persönliche Scroll-Bremse.</Text>
+      <Text variant="title">6 Fragen bis zum Schutz.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Deine Antworten bestimmen, welche Apps Pushly blockt, wie hart dein Unlock wird und wie der erste Schutzmodus aussieht.
+        Kurz durchziehen. Dann ist es aktiv.
       </Text>
 
       <View style={styles.quizVisual}>
@@ -657,12 +678,6 @@ function QuizIntroStep({
         </View>
       </View>
 
-      <BlurView intensity={24} tint="dark" style={styles.infoPanel}>
-        <Text variant="heading">Was du gleich beantwortest</Text>
-        <Text variant="body" style={{ color: theme.colors.textMuted }}>
-          Trigger-Apps, verlorene Zeit, Frust-Level und welche Lösungen bisher versagt haben.
-        </Text>
-      </BlurView>
     </View>
   );
 }
@@ -683,9 +698,9 @@ function NameStep({
       <Text variant="caption" style={styles.eyebrow}>
         SCHRITT 1
       </Text>
-      <Text variant="title">Wie sollen wir dich ansprechen?</Text>
+      <Text variant="title">Wie sollen wir dich nennen?</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Der Flow wird persönlich. Pushly redet dich nicht an wie irgendeinen anonymen User.
+        Dein Name macht es verbindlich.
       </Text>
 
       <BlurView intensity={20} tint="dark" style={styles.inputShell}>
@@ -702,10 +717,6 @@ function NameStep({
         />
       </BlurView>
 
-      <View style={styles.inlineMetricRow}>
-        <StatPill label="Personalisierte Copy" value="An" theme={theme} styles={styles} />
-        <StatPill label="Lock-Setup" value="Individuell" theme={theme} styles={styles} />
-      </View>
     </View>
   );
 }
@@ -724,7 +735,7 @@ function AppSelectionStep({
   theme: ReturnType<typeof useTheme>['theme'];
   title: string;
   subtitle: string;
-  helper: string;
+  helper?: string;
   options: AppSelectionOption[];
   selectedIds: string[];
   onToggle: (id: any) => void;
@@ -743,9 +754,6 @@ function AppSelectionStep({
         <Text variant="caption" style={{ color: theme.colors.textMuted }}>
           {selectedIds.length}/3 gewählt
         </Text>
-        <Text variant="caption" style={{ color: theme.colors.accent }}>
-          harte Trigger zuerst
-        </Text>
       </View>
 
       <View style={styles.appGrid}>
@@ -753,8 +761,9 @@ function AppSelectionStep({
           <Pressable
             key={option.id}
             onPress={() => onToggle(option.id)}
-            style={[
+            style={({ pressed }) => [
               styles.appCard,
+              pressed && styles.touchPressed,
               selectedIds.includes(option.id) && {
                 borderColor: theme.colors.accent,
                 backgroundColor: 'rgba(186,250,32,0.14)'
@@ -769,12 +778,14 @@ function AppSelectionStep({
         ))}
       </View>
 
-      <BlurView intensity={16} tint="dark" style={styles.helperCard}>
-        <Ionicons name="lock-closed-outline" size={18} color={theme.colors.accent} />
-        <Text variant="caption" style={{ color: theme.colors.textMuted, flex: 1 }}>
-          {helper}
-        </Text>
-      </BlurView>
+      {helper ? (
+        <BlurView intensity={16} tint="dark" style={styles.helperCard}>
+          <Ionicons name="lock-closed-outline" size={18} color={theme.colors.accent} />
+          <Text variant="caption" style={{ color: theme.colors.textMuted, flex: 1 }}>
+            {helper}
+          </Text>
+        </BlurView>
+      ) : null}
     </View>
   );
 }
@@ -795,9 +806,9 @@ function ScrollMinutesStep({
       <Text variant="caption" style={styles.eyebrow}>
         ZEITVERLUST
       </Text>
-      <Text variant="title">Wie viel Scroll-Zeit verschwindet bei dir pro Tag?</Text>
+      <Text variant="title">Wie viel Zeit verlierst du?</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Sei ehrlich. Pushly muss die Reibung an dein echtes Muster anpassen, nicht an die Version von dir, die brav wirken will.
+        Ehrlich schätzen. Dann passt der Schutz.
       </Text>
 
       <View style={styles.minutesDisplay}>
@@ -813,15 +824,15 @@ function ScrollMinutesStep({
         step={1}
         value={value}
         onValueChange={(next) => onChange(Math.round(next))}
+        onSlidingComplete={() => {
+          void Haptics.selectionAsync().catch(() => {});
+        }}
         minimumTrackTintColor={theme.colors.accent}
         maximumTrackTintColor="rgba(255,255,255,0.16)"
         thumbTintColor="#FFFFFF"
       />
 
-      <View style={styles.inlineMetricRow}>
-        <StatPill label="Pro Woche" value={`${Math.round((value * 7) / 60)} Std`} theme={theme} styles={styles} />
-        <StatPill label="Unlock-Härte" value="dynamisch" theme={theme} styles={styles} />
-      </View>
+      <StatPill label="Pro Woche" value={`${Math.round((value * 7) / 60)} Std`} theme={theme} styles={styles} />
     </View>
   );
 }
@@ -887,9 +898,9 @@ function DiagnosisStep({
       <Text variant="caption" style={[styles.eyebrow, { color: theme.colors.dangerSoft }]}>
         DIAGNOSE
       </Text>
-      <Text variant="title">Das sieht im Moment nicht nach Kontrolle aus, {name}.</Text>
+      <Text variant="title">Gerade steuert der Reflex, {name}.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Deine Antworten zeigen ein klares Muster: zu viel Zugriff, zu wenig Reibung und ein Impuls, der schneller ist als dein Vorsatz.
+        Dein Impuls ist schneller als dein Vorsatz.
       </Text>
 
       <LinearGradient colors={['rgba(255,122,26,0.22)', 'rgba(255,122,26,0.04)']} style={styles.diagnosisCard}>
@@ -898,12 +909,7 @@ function DiagnosisStep({
           <ScoreBar label="Durchschnitt" value={average} tone="accent" styles={styles} theme={theme} />
         </View>
 
-        <Text variant="heading">
-          {score - average}% härter gebunden als der Durchschnitt
-        </Text>
-        <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-          Das ist keine medizinische Diagnose. Aber es ist ein klares Signal, dass weichere Tools bei dir zu weich sind.
-        </Text>
+        <Text variant="heading">{score - average}% über dem Schnitt</Text>
       </LinearGradient>
     </View>
   );
@@ -912,14 +918,12 @@ function DiagnosisStep({
 function ReframeStep({
   styles,
   theme,
-  name,
   minutes,
   pushUps,
   monthlyHoursLost
 }: {
   styles: ReturnType<typeof createStyles>;
   theme: ReturnType<typeof useTheme>['theme'];
-  name: string;
   minutes: number;
   pushUps: number;
   monthlyHoursLost: number;
@@ -929,15 +933,15 @@ function ReframeStep({
       <Text variant="caption" style={styles.eyebrow}>
         REFRAME
       </Text>
-      <Text variant="title">Pushly verwandelt verlorene Minuten in körperliche Reibung.</Text>
+      <Text variant="title">Aus Zeitverlust wird Schutz.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Statt dir nur ein schlechtes Gewissen zu schicken, koppeln wir den nächsten Unlock direkt an Bewegung.
+        Reps setzen den Preis.
       </Text>
 
       <View style={styles.metricGrid}>
-        <MetricCard label="Täglicher Verlust" value={`${minutes} Min`} detail="dein aktueller Sog" styles={styles} theme={theme} />
-        <MetricCard label="Erster Unlock" value={`${pushUps}`} detail="Liegestütze pro Sperre" styles={styles} theme={theme} accent />
-        <MetricCard label="Monatlich zurück" value={`${monthlyHoursLost} Std`} detail={`${name} bekommt wieder Zeit zurück`} styles={styles} theme={theme} />
+        <MetricCard label="Täglicher Verlust" value={`${minutes} Min`} detail="aktuell" styles={styles} theme={theme} />
+        <MetricCard label="Erster Zugriff" value={`${pushUps} Reps`} detail="pro Sperre" styles={styles} theme={theme} accent />
+        <MetricCard label="Monatlich zurück" value={`${monthlyHoursLost} Std`} detail="zurückgewonnene Zeit" styles={styles} theme={theme} />
       </View>
     </View>
   );
@@ -959,19 +963,19 @@ function MechanicStep({
       <Text variant="caption" style={styles.eyebrow}>
         PRODUKTMECHANIK
       </Text>
-      <Text variant="title">So stoppt Pushly den Impuls genau im richtigen Moment.</Text>
+      <Text variant="title">Die Regel ist ganz einfach.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Öffnen. Blockieren. Liegestütze machen. Erst dann wird die App wieder freigeschaltet.
+        Öffnen. Block. Reps. Zugriff.
       </Text>
 
       <PhoneShell styles={styles} theme={theme}>
         <View style={styles.lockedAppShell}>
           <BrandBubble option={app} size="large" theme={theme} />
           <Text variant="heading" style={{ textAlign: 'center' }}>
-            {app.label} ist durch Pushly blockiert
+            {app.label} ist gesperrt
           </Text>
           <Text variant="caption" style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
-            Dein nächster Unlock kostet {pushUps} Liegestütze.
+            Zugriff kostet {pushUps} Reps.
           </Text>
 
           <LinearGradient colors={[theme.colors.accent, theme.colors.accentSoft]} style={styles.unlockBadge}>
@@ -984,9 +988,8 @@ function MechanicStep({
       </PhoneShell>
 
       <View style={styles.mechanicSteps}>
-        <MiniStep label="1" text="Du tippst die Trigger-App an." styles={styles} theme={theme} />
-        <MiniStep label="2" text="Pushly sperrt sofort statt zu erinnern." styles={styles} theme={theme} />
-        <MiniStep label="3" text="Erst Bewegung holt dir den Zugriff zurück." styles={styles} theme={theme} />
+        <MiniStep label="1" text="App öffnen. Sofort Sperre." styles={styles} theme={theme} />
+        <MiniStep label="2" text="Reps machen. Zugriff zurück." styles={styles} theme={theme} />
       </View>
     </View>
   );
@@ -1020,9 +1023,9 @@ function ScreenTimePermissionStep({
       <Text variant="caption" style={styles.eyebrow}>
         SCREEN TIME
       </Text>
-      <Text variant="title">Jetzt erlaubst du Pushly echten Zugriff auf deine Schutz-Mechanik.</Text>
+      <Text variant="title">Ein Schritt zum echten Schutz.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Nur mit Family Controls kann Pushly deine Trigger-Apps wirklich blocken, prüfen und später erst nach Reps wieder freigeben.
+        Ohne Freigabe keine Sperre.
       </Text>
 
       <PhoneShell styles={styles} theme={theme}>
@@ -1033,10 +1036,10 @@ function ScreenTimePermissionStep({
             resizeMode="contain"
           />
           <Text variant="heading" style={{ textAlign: 'center' }}>
-            Pushly schützt deine größten Trigger live.
+            Freigabe jetzt erteilen.
           </Text>
           <Text variant="caption" style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
-            Erlaube Family Controls und wähle danach deine nativen Sperrziele.
+            Danach Apps für die Sperre wählen.
           </Text>
 
           <View style={styles.permissionStatusRow}>
@@ -1075,7 +1078,7 @@ function ScreenTimePermissionStep({
           </View>
 
           <Text variant="caption" style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
-            Shield: {shieldStatus === 'active' ? 'bereit' : shieldStatus === 'unsupported' ? 'nicht unterstützt' : 'noch nicht aktiv'}
+            Schutz: {shieldStatus === 'active' ? 'aktiv' : shieldStatus === 'unsupported' ? 'nicht verfügbar' : 'offen'}
           </Text>
         </View>
       </PhoneShell>
@@ -1093,7 +1096,7 @@ function ScreenTimePermissionStep({
         <View style={styles.nativeBusyRow}>
           <ActivityIndicator size="small" color={theme.colors.accent} />
           <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-            Pushly verbindet gerade die native Schutzschicht ...
+            Schutz wird verbunden ...
           </Text>
         </View>
       ) : null}
@@ -1115,30 +1118,23 @@ function CameraCalibrationStep({
       <Text variant="caption" style={styles.eyebrow}>
         KAMERA SETUP
       </Text>
-      <Text variant="title">Jetzt kalibrieren wir deinen Push-up-Test.</Text>
+      <Text variant="title">Richte die Kamera kurz aus.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Pushly erkennt Reps am sichersten, wenn Schultern, Hüfte und Füße sichtbar bleiben und du im Licht nicht absäufst.
+        Dann zählen Reps zuverlässig.
       </Text>
 
       <View style={styles.tipStack}>
         <TipCard
           title="Ganzkörper sichtbar"
-          body="Kopf, Schultern, Hüfte und Füße sollten im Bild bleiben."
+          body="Kopf bis Füße im Bild."
           icon="scan-outline"
           styles={styles}
           theme={theme}
         />
         <TipCard
           title="Helles, klares Licht"
-          body="Mehr Kontrast bedeutet weniger verlorene Frames und mehr echte Reps."
+          body="Mehr Licht, bessere Erkennung."
           icon="sunny-outline"
-          styles={styles}
-          theme={theme}
-        />
-        <TipCard
-          title="iPhone quer, leicht frontal"
-          body="So bekommt Vision deine Körperlinie deutlich stabiler."
-          icon="phone-landscape-outline"
           styles={styles}
           theme={theme}
         />
@@ -1157,10 +1153,7 @@ function CameraCalibrationStep({
         />
       </BlurView>
 
-      <View style={styles.inlineMetricRow}>
-        <StatPill label="Pose Engine" value={poseEngineReady ? 'bereit' : 'lade ...'} theme={theme} styles={styles} />
-        <StatPill label="Skelett" value="live overlay" theme={theme} styles={styles} />
-      </View>
+      <StatPill label="Pose Engine" value={poseEngineReady ? 'bereit' : 'lädt ...'} theme={theme} styles={styles} />
     </View>
   );
 }
@@ -1334,25 +1327,21 @@ function RatingStep({
       <Text variant="caption" style={styles.eyebrow}>
         SOCIAL PROOF
       </Text>
-      <Text variant="title">Genau hier kippt die Psychologie: weniger Reflex, mehr Kontrolle.</Text>
+      <Text variant="title">Du bist damit nicht allein.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Sobald du Pushly wirklich zwischen Impuls und App setzt, wird aus Scroll-Zeit wieder Fokus-Zeit.
+        Die Methode wirkt bei vielen.
       </Text>
 
       <BlurView intensity={20} tint="dark" style={styles.ratingHero}>
         <Text variant="heading" style={{ textAlign: 'center' }}>
-          4.8 / 5 aus der Launch-Community
-        </Text>
-        <Text variant="caption" style={{ color: theme.colors.textMuted, textAlign: 'center' }}>
-          "Es fühlt sich nicht wie Bestrafung an, sondern wie ein Coach zwischen mir und meinem nächsten Reflex."
+          4,8 / 5 aus der Beta-Community
         </Text>
       </BlurView>
 
       <View style={styles.timelineStack}>
         {[
-          `Tag 1: Du bremst automatische App-Opens schon nach den ersten ${answers.pushUpRepCount || 1} Reps.`,
-          `Tag 3: Dein Kopf merkt, dass Scrollen jetzt Friktion kostet statt gratis ist.`,
-          `Tag ${days}: Deine stärksten Trigger verlieren sichtbar an Zug.`
+          `Tag 1: Du stoppst Auto-Öffnen mit ${answers.pushUpRepCount || 1} Reps.`,
+          `Tag ${days}: Der Zug der Trigger sinkt spürbar.`
         ].map((item, index) => (
           <BlurView key={item} intensity={16} tint="dark" style={styles.timelineCard}>
             <View style={styles.timelineBadge}>
@@ -1384,9 +1373,9 @@ function AuthStep({
   return (
     <View style={styles.standardStep}>
       <Image source={require('../../assets/images/logo_header.png')} style={styles.paywallLogo} resizeMode="contain" />
-      <Text variant="title">Sichere dein Pushly-Setup ab.</Text>
+      <Text variant="title">Sichere deinen Fortschritt.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Dein Schutz steht. Jetzt wählst du nur noch, wie dein Konto später mit Abos, Streaks und Geräten verbunden werden soll.
+        Noch ein Schritt, dann fertig.
       </Text>
 
       <View style={styles.authMethodStack}>
@@ -1397,8 +1386,9 @@ function AuthStep({
             <Pressable
               key={option.id}
               onPress={() => onSelectMethod(option.id)}
-              style={[
+              style={({ pressed }) => [
                 styles.authMethodCard,
+                pressed && styles.touchPressed,
                 selected && {
                   borderColor: theme.colors.accent,
                   backgroundColor: 'rgba(186,250,32,0.1)'
@@ -1437,9 +1427,9 @@ function TrustStep({
       <Text variant="caption" style={styles.eyebrow}>
         WARUM DAS FUNKTIONIERT
       </Text>
-      <Text variant="title">Pushly ist kein Timer. Kein Reminder. Keine Alibi-Lösung.</Text>
+      <Text variant="title">Pushly setzt echte Reibung.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Wir bauen absichtlich Reibung an den Moment, an dem du normalerweise impulsiv aufmachst.
+        Genau im Moment des Impulses.
       </Text>
 
       <View style={styles.trustCards}>
@@ -1457,10 +1447,6 @@ function TrustStep({
         ))}
       </View>
 
-      <View style={styles.inlineMetricRow}>
-        <StatPill label="Mechanik" value="hart" theme={theme} styles={styles} />
-        <StatPill label="Optik" value="premium" theme={theme} styles={styles} />
-      </View>
     </View>
   );
 }
@@ -1479,16 +1465,13 @@ function PaywallStep({
   return (
     <View style={styles.standardStep}>
       <Image source={require('../../assets/images/logo_header.png')} style={styles.paywallLogo} resizeMode="contain" />
-      <Text variant="title">Wähle deinen Pushly-Zugang.</Text>
+      <Text variant="title">Wähle deinen Zugang.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Du kaufst keine hübsche Motivation. Du kaufst eine echte Hürde zwischen dir und deinem nächsten Scroll-Reflex.
+        Du kaufst Schutz statt Willenskraft.
       </Text>
 
       <BlurView intensity={20} tint="dark" style={styles.quoteCard}>
-        <Text variant="heading">Jeder Unlock bekommt einen Preis.</Text>
-        <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-          Genau deshalb fühlt sich Pushly nicht wie eine weitere Reminder-App an.
-        </Text>
+        <Text variant="heading">Jeder Zugriff hat einen Preis.</Text>
       </BlurView>
 
       <View style={styles.planStack}>
@@ -1499,8 +1482,9 @@ function PaywallStep({
             <Pressable
               key={plan.id}
               onPress={() => onSelectPlan(plan.id)}
-              style={[
+              style={({ pressed }) => [
                 styles.planCard,
+                pressed && styles.touchPressed,
                 selected && {
                   borderColor: theme.colors.accent,
                   backgroundColor: 'rgba(186,250,32,0.1)'
@@ -1540,7 +1524,7 @@ function PaywallStep({
       </View>
 
       <View style={styles.featureColumn}>
-        {['Appsperre für deine Haupttrigger', 'Liegestütz-Unlock als Mechanik', 'Detektions-Setup und Fokus-Flow'].map((item) => (
+        {['Sperre für deine Trigger', 'Reps für jeden Zugriff'].map((item) => (
           <View key={item} style={styles.featureRow}>
             <Ionicons name="checkmark-circle" size={18} color={theme.colors.accent} />
             <Text variant="caption" style={{ color: theme.colors.textMuted, flex: 1 }}>
@@ -1569,9 +1553,9 @@ function SetupPreviewStep({
       <Text variant="caption" style={styles.eyebrow}>
         BEREIT
       </Text>
-      <Text variant="title">Dein Schutzmodus startet jetzt.</Text>
+      <Text variant="title">Dein Schutz ist bereit.</Text>
       <Text variant="body" style={styles.subtleCopy}>
-        Family Controls ist verbunden, dein Test war erfolgreich und {app.label} ist als erste native Trigger-Fläche vorbereitet.
+        Setup fertig. Du kannst loslegen.
       </Text>
 
       <PhoneShell styles={styles} theme={theme}>
@@ -1619,20 +1603,30 @@ function FlowHeader({
   onBack,
   tone,
   showProgress,
-  canGoBack
+  canGoBack,
+  stepLabel,
+  stepIndex,
+  stepCount
 }: {
   progress: number;
   onBack: () => void;
   tone: 'accent' | 'danger';
   showProgress: boolean;
   canGoBack: boolean;
+  stepLabel: string;
+  stepIndex: number;
+  stepCount: number;
 }) {
   const { theme } = useTheme();
   const styles = createStyles(theme);
 
   return (
     <View style={styles.header}>
-      <Pressable onPress={onBack} disabled={!canGoBack} style={styles.backButton}>
+      <Pressable
+        onPress={onBack}
+        disabled={!canGoBack}
+        style={({ pressed }) => [styles.backButton, pressed && canGoBack && styles.touchPressed]}
+      >
         <Ionicons
           name="chevron-back"
           size={22}
@@ -1641,18 +1635,25 @@ function FlowHeader({
       </Pressable>
 
       {showProgress ? (
-        <View style={styles.progressTrack}>
-          <LinearGradient
-            colors={
-              tone === 'danger'
-                ? [theme.colors.danger, theme.colors.dangerSoft]
-                : [theme.colors.accent, theme.colors.accentSoft]
-            }
-            style={[styles.progressFill, { width: `${Math.max(progress * 100, 7)}%` }]}
-          />
+        <View style={styles.headerCenter}>
+          <View style={styles.progressTrack}>
+            <LinearGradient
+              colors={
+                tone === 'danger'
+                  ? [theme.colors.danger, theme.colors.dangerSoft]
+                  : [theme.colors.accent, theme.colors.accentSoft]
+              }
+              style={[styles.progressFill, { width: `${Math.max(progress * 100, 7)}%` }]}
+            />
+          </View>
+          <Text variant="caption" style={styles.headerStepMeta}>
+            {stepIndex + 1}/{stepCount} · {stepLabel}
+          </Text>
         </View>
       ) : (
-        <View style={styles.headerSpacer} />
+        <Text variant="caption" style={styles.headerHeroLabel}>
+          Pushly Onboarding
+        </Text>
       )}
 
       <View style={styles.headerSpacer} />
@@ -1790,7 +1791,15 @@ function GradientCta({
       : ([theme.colors.accentStrong, theme.colors.accent] as const);
 
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={[styles.ctaShell, disabled && styles.ctaDisabled]}>
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      style={({ pressed }) => [
+        styles.ctaShell,
+        disabled && styles.ctaDisabled,
+        pressed && !disabled && styles.ctaPressed
+      ]}
+    >
       <LinearGradient
         colors={colors}
         start={{ x: 0, y: 0 }}
@@ -1860,8 +1869,9 @@ function SelectionRow({
   return (
     <Pressable
       onPress={onPress}
-      style={[
+      style={({ pressed }) => [
         styles.selectionRow,
+        pressed && styles.touchPressed,
         selected && {
           borderColor: theme.colors.accent,
           backgroundColor: 'rgba(186,250,32,0.1)'
@@ -2174,14 +2184,20 @@ function InlineActionButton({
   theme: ReturnType<typeof useTheme>['theme'];
   variant?: 'primary' | 'secondary';
 }) {
+  const handlePress = () => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    onPress();
+  };
+
   return (
     <Pressable
-      onPress={onPress}
+      onPress={handlePress}
       disabled={disabled}
-      style={[
+      style={({ pressed }) => [
         styles.inlineActionButton,
         variant === 'secondary' && styles.inlineActionButtonSecondary,
-        disabled && { opacity: 0.45 }
+        disabled && { opacity: 0.45 },
+        pressed && !disabled && styles.touchPressed
       ]}
     >
       <LinearGradient
@@ -2225,8 +2241,22 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
       flexDirection: 'row',
       alignItems: 'center',
       paddingHorizontal: 20,
-      paddingBottom: 10,
+      paddingBottom: 8,
+      paddingTop: 2,
       gap: 12
+    },
+    headerCenter: {
+      flex: 1,
+      gap: 6
+    },
+    headerStepMeta: {
+      color: theme.colors.textMuted,
+      textAlign: 'center'
+    },
+    headerHeroLabel: {
+      color: theme.colors.textMuted,
+      flex: 1,
+      textAlign: 'center'
     },
     backButton: {
       width: 36,
@@ -2252,7 +2282,7 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
     },
     contentContainer: {
       paddingHorizontal: 20,
-      paddingBottom: 24,
+      paddingBottom: 32,
       alignItems: 'center',
       flexGrow: 1
     },
@@ -2415,7 +2445,7 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
       backgroundColor: theme.colors.accent
     },
     standardStep: {
-      gap: 20,
+      gap: 18,
       paddingTop: 8
     },
     eyebrow: {
@@ -2993,7 +3023,7 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
     },
     footer: {
       paddingHorizontal: 20,
-      paddingBottom: 18,
+      paddingBottom: 14,
       gap: 12,
       width: '100%',
       alignSelf: 'center',
@@ -3013,6 +3043,9 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
     ctaDisabled: {
       opacity: 0.46
     },
+    ctaPressed: {
+      transform: [{ scale: 0.992 }]
+    },
     ctaGradient: {
       minHeight: 62,
       alignItems: 'center',
@@ -3023,6 +3056,10 @@ function createStyles(theme: ReturnType<typeof useTheme>['theme']) {
       width: 90,
       top: -16,
       bottom: -16
+    },
+    touchPressed: {
+      opacity: 0.84,
+      transform: [{ scale: 0.992 }]
     }
   });
 }
