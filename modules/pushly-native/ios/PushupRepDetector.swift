@@ -33,9 +33,93 @@ final class PushupRepDetector {
   private var topRecoveryFrames = 0
   private var ascendingSignalGapFrames = 0
   private var topRecoveryGateGapFrames = 0
+  private var commitPathActive = false
+  private var commitPathGraceFramesRemaining = 0
+  private var commitTopRecoveryFrames = 0
+  private var bottomConfirmedLatched = false
+  private var bottomLatchFramesRemaining = 0
+  private var trackingLossGraceFramesRemaining = 0
+  private var trackingLossDuringCommitPath = 0
+  private var lostTrackingAtBottom = false
+  private var didEnterAscending = false
+  private var didEnterTopRecovery = false
+  private var commitCancelledReason: String?
+  private var firstBlockingConditionAfterBottom: String?
+  private var bottomConfirmedCount = 0
+  private var ascendingEnteredCount = 0
+  private var topRecoveryEnteredCount = 0
+  private var repCommitAttemptCount = 0
+  private var repCommitSuccessCount = 0
+  private var repCommitBlockedCount = 0
   private var smoothedTorsoStability: Double = 0.4
   private var torsoUnstableFrames = 0
   private var previousStateForDebugEvent: PushupState = .idle
+  private var previousRepStateMachineStateForDebugEvent = "idle"
+  private var previousRawShoulderY: CGFloat = 0
+  private var previousRawTorsoY: CGFloat = 0
+  private var currentRawShoulderY: CGFloat = 0
+  private var currentRawTorsoY: CGFloat = 0
+  private var currentRawShoulderVelocity: CGFloat = 0
+  private var currentRawTorsoVelocity: CGFloat = 0
+  private var currentFrameIndex: Int = 0
+  private var currentTimestampSeconds: Double = 0
+  private var currentRepStateMachineState = "idle"
+  private var currentRepStateTransitionEvent: String?
+  private var currentWeakestLandmark: String?
+  private var currentWeakestLandmarkConfidence = 0.0
+  private var currentMissingLandmarks: [String] = []
+  private var currentLandmarkQuality: [String: [String: Any]] = [:]
+  private var currentBottomNearMiss = false
+  private var currentBodyFound = false
+  private var currentTrackingQualityPass = false
+  private var currentLogicQualityPass = false
+  private var currentBottomGate = false
+  private var currentAscentGate = false
+  private var currentRearmGate = false
+  private var currentCountCommitReady = false
+  private var currentCommitPathActive = false
+  private var currentIdleResetReason: String?
+  private var currentPendingCommitReason: String?
+  private var currentCommitBlockedBy: String?
+  private var currentCommitCancelledReason: String?
+  private var currentFirstBlockingConditionAfterBottom: String?
+  private var lastFailedGate: String?
+  private var lastSuccessfulGate: String?
+  private var whyRepDidNotCount: String?
+  private var firstFinalBlocker: String?
+  private var currentRearmBlockedReason: String?
+  private var currentRearmMissingCondition: String?
+  private var repsAttemptedEstimate = 0
+  private var repsBlockedByBottom = 0
+  private var repsBlockedByTopRecovery = 0
+  private var repsBlockedByRearm = 0
+  private var repsBlockedByTrackingLoss = 0
+  private var repsBlockedByTravel = 0
+  private var repsBlockedByQuality = 0
+  private var attemptActive = false
+  private var topReadyLatched = false
+  private var cycleFramesSinceDescendingStart = 0
+  private var cycleFramesSinceBottomLatch = 0
+  private var currentTopReady = false
+  private var currentDescendingStarted = false
+  private var currentBottomLatched = false
+  private var currentAscendingStarted = false
+  private var currentTopRecovered = false
+  private var currentRepCommitted = false
+  private var currentRearmReady = false
+  private var currentResetReason: String?
+  private var currentTimeoutOrAbortReason: String?
+  private var establishedPushupBodyFrames = 0
+  private var bodyFoundDropGraceFramesRemaining = 0
+  private var rearmTopRecoveryDipGraceFramesRemaining = 0
+  private var rearmDescendingSignalGraceFramesRemaining = 0
+  private var currentRearmConfirmProgress = 0.0
+  private let bottomReacquireHoldMinFrames = 2
+  private let bottomReacquireHoldMaxFrames = 6
+  private var bottomReacquireHoldFramesRemaining = 0
+  private var currentBottomReacquireState: String?
+  private var currentBottomSupportAnchors: [String] = []
+  private var currentBottomBlockedReason: String?
 
   init(config: PushlyPoseConfig) {
     self.config = config
@@ -69,65 +153,466 @@ final class PushupRepDetector {
     topRecoveryFrames = 0
     ascendingSignalGapFrames = 0
     topRecoveryGateGapFrames = 0
+    commitPathActive = false
+    commitPathGraceFramesRemaining = 0
+    commitTopRecoveryFrames = 0
+    bottomConfirmedLatched = false
+    bottomLatchFramesRemaining = 0
+    trackingLossGraceFramesRemaining = 0
+    trackingLossDuringCommitPath = 0
+    lostTrackingAtBottom = false
+    didEnterAscending = false
+    didEnterTopRecovery = false
+    commitCancelledReason = nil
+    firstBlockingConditionAfterBottom = nil
+    bottomConfirmedCount = 0
+    ascendingEnteredCount = 0
+    topRecoveryEnteredCount = 0
+    repCommitAttemptCount = 0
+    repCommitSuccessCount = 0
+    repCommitBlockedCount = 0
     smoothedTorsoStability = 0.4
     torsoUnstableFrames = 0
     previousStateForDebugEvent = .idle
+    previousRepStateMachineStateForDebugEvent = "idle"
+    previousRawShoulderY = 0
+    previousRawTorsoY = 0
+    currentRawShoulderY = 0
+    currentRawTorsoY = 0
+    currentRawShoulderVelocity = 0
+    currentRawTorsoVelocity = 0
+    currentFrameIndex = 0
+    currentTimestampSeconds = 0
+    currentRepStateMachineState = "idle"
+    currentRepStateTransitionEvent = nil
+    currentWeakestLandmark = nil
+    currentWeakestLandmarkConfidence = 0
+    currentMissingLandmarks = []
+    currentLandmarkQuality = [:]
+    currentBottomNearMiss = false
+    currentBodyFound = false
+    currentTrackingQualityPass = false
+    currentLogicQualityPass = false
+    currentBottomGate = false
+    currentAscentGate = false
+    currentRearmGate = false
+    currentCountCommitReady = false
+    currentCommitPathActive = false
+    currentIdleResetReason = nil
+    currentPendingCommitReason = nil
+    currentCommitBlockedBy = nil
+    currentCommitCancelledReason = nil
+    currentFirstBlockingConditionAfterBottom = nil
+    lastFailedGate = nil
+    lastSuccessfulGate = nil
+    whyRepDidNotCount = nil
+    firstFinalBlocker = nil
+    currentRearmBlockedReason = nil
+    currentRearmMissingCondition = nil
+    repsAttemptedEstimate = 0
+    repsBlockedByBottom = 0
+    repsBlockedByTopRecovery = 0
+    repsBlockedByRearm = 0
+    repsBlockedByTrackingLoss = 0
+    repsBlockedByTravel = 0
+    repsBlockedByQuality = 0
+    attemptActive = false
+    topReadyLatched = false
+    cycleFramesSinceDescendingStart = 0
+    cycleFramesSinceBottomLatch = 0
+    currentTopReady = false
+    currentDescendingStarted = false
+    currentBottomLatched = false
+    currentAscendingStarted = false
+    currentTopRecovered = false
+    currentRepCommitted = false
+    currentRearmReady = false
+    currentResetReason = nil
+    currentTimeoutOrAbortReason = nil
+    establishedPushupBodyFrames = 0
+    bodyFoundDropGraceFramesRemaining = 0
+    rearmTopRecoveryDipGraceFramesRemaining = 0
+    rearmDescendingSignalGraceFramesRemaining = 0
+    currentRearmConfirmProgress = 0
+    bottomReacquireHoldFramesRemaining = 0
+    currentBottomReacquireState = nil
+    currentBottomSupportAnchors = []
+    currentBottomBlockedReason = nil
   }
 
   func update(
     joints: [PushlyJointName: TrackedJoint],
     quality: TrackingQuality,
-    repTarget: Int
+    repTarget: Int,
+    frameIndex: Int = 0,
+    timestamp: TimeInterval = 0
   ) -> RepDetectionOutput {
     _ = repTarget
+    currentFrameIndex = frameIndex
+    currentTimestampSeconds = timestamp
+    currentRepStateTransitionEvent = nil
+    currentBottomNearMiss = false
+    currentRearmBlockedReason = nil
+    currentRearmMissingCondition = nil
+    currentIdleResetReason = nil
+    currentPendingCommitReason = nil
+    currentCommitBlockedBy = nil
+    currentCommitCancelledReason = nil
+    currentFirstBlockingConditionAfterBottom = nil
+    lostTrackingAtBottom = false
+    currentTopReady = false
+    currentDescendingStarted = false
+    currentBottomLatched = false
+    currentAscendingStarted = false
+    currentTopRecovered = false
+    currentRepCommitted = false
+    currentRearmReady = !repRearmPending
+    currentResetReason = nil
+    currentTimeoutOrAbortReason = nil
+    currentBottomReacquireState = nil
+    currentBottomSupportAnchors = []
+    currentBottomBlockedReason = nil
+    let landmarkDiagnostics = buildLandmarkDiagnostics(joints: joints)
+    currentLandmarkQuality = landmarkDiagnostics.landmarkQuality
+    currentWeakestLandmark = landmarkDiagnostics.weakestLandmark
+    currentWeakestLandmarkConfidence = landmarkDiagnostics.weakestConfidence
+    currentMissingLandmarks = landmarkDiagnostics.missingLandmarks
     let signal = computeSignal(joints: joints)
     let floorState = quality.pushupFloorModeActive || signal.pushupFloorState
     let minMeasuredEvidence = floorState ? config.rep.floorMinMeasuredEvidence : config.rep.minMeasuredEvidence
     let minTorsoStability = floorState ? config.rep.floorMinTorsoStability : config.rep.minTorsoStability
     let minShoulderHipLineQuality = floorState ? config.rep.floorMinShoulderHipLineQuality : config.rep.minShoulderHipLineQuality
     let dominantEvidence = max(signal.measuredEvidence, signal.structuralEvidence, signal.upperBodyEvidence)
+    let inActivePushupPhase =
+      repRearmPending ||
+      commitPathActive ||
+      bottomReached ||
+      bottomConfirmedLatched ||
+      descendingFrames > 0 ||
+      bottomFrames > 0 ||
+      ascendingFrames > 0 ||
+      state == .descending ||
+      state == .ascending ||
+      state == .plankLocked ||
+      topReadyLatched
+    let hasPlausibleFloorAnchors = hasPlausibleFloorBodyAnchors(joints: joints)
+    let bottomSupport = bottomSupportAnchors(joints: joints)
+    currentBottomSupportAnchors = bottomSupport.names
+    let qualityNotCollapsed =
+      quality.renderQuality >= max(0.16, config.quality.renderMin * 0.62) &&
+      quality.upperBodyCoverage >= config.quality.notFoundThreshold * 0.8
+    let inBottomCommitWindow = commitPathActive && (bottomReached || bottomConfirmedLatched)
+    let bottomTrackingNotCollapsed =
+      quality.renderQuality >= max(0.13, config.quality.renderMin * 0.52) &&
+      quality.upperBodyCoverage >= max(0.22, config.quality.notFoundThreshold * 0.65)
+    let bottomEvidenceNotCollapsed =
+      dominantEvidence >= max(0.24, minMeasuredEvidence * 0.68) ||
+      quality.logicQuality >= max(0.14, config.rep.minLogicQualityToProgress * 0.72)
+    let bottomReacquireHoldEligible =
+      inBottomCommitWindow &&
+      bottomSupport.hasAny &&
+      bottomTrackingNotCollapsed &&
+      (bottomEvidenceNotCollapsed || qualityNotCollapsed || repRearmPending || ascendingFrames > 0)
+    if inBottomCommitWindow {
+      currentBottomReacquireState = bottomReacquireHoldEligible ? "eligible" : "blocked"
+      if !bottomReacquireHoldEligible {
+        currentBottomBlockedReason = "bottom_support_or_quality_insufficient"
+      }
+    } else {
+      currentBottomReacquireState = "inactive"
+    }
+    if signal.hasRenderableBody {
+      if inActivePushupPhase || floorState {
+        establishedPushupBodyFrames = min(12, establishedPushupBodyFrames + 2)
+      } else {
+        establishedPushupBodyFrames = min(12, establishedPushupBodyFrames + 1)
+      }
+    } else {
+      establishedPushupBodyFrames = max(0, establishedPushupBodyFrames - 1)
+    }
+    let bodyPreviouslyEstablished = establishedPushupBodyFrames >= 2 || repCount > 0 || repRearmPending
+    let floorFallbackBodyFound =
+      bodyPreviouslyEstablished &&
+      (inActivePushupPhase || floorState) &&
+      hasPlausibleFloorAnchors &&
+      qualityNotCollapsed
+    var hasRenderableBodyForLogic = signal.hasRenderableBody || floorFallbackBodyFound
+    if signal.hasRenderableBody, bodyPreviouslyEstablished || inActivePushupPhase {
+      bodyFoundDropGraceFramesRemaining = max(bodyFoundDropGraceFramesRemaining, 3)
+    }
+    if !hasRenderableBodyForLogic {
+      let allowDropGrace =
+        bodyPreviouslyEstablished &&
+        qualityNotCollapsed &&
+        (inActivePushupPhase || hasPlausibleFloorAnchors || floorState)
+      if allowDropGrace, bodyFoundDropGraceFramesRemaining > 0 {
+        bodyFoundDropGraceFramesRemaining -= 1
+        hasRenderableBodyForLogic = true
+      } else if !allowDropGrace {
+        bodyFoundDropGraceFramesRemaining = 0
+      }
+    } else if signal.hasRenderableBody {
+      bodyFoundDropGraceFramesRemaining = max(bodyFoundDropGraceFramesRemaining, 2)
+    }
+    var topReady = false
+    var descendingStarted = false
+    var bottomLatched = false
+    var ascendingStarted = false
+    var topRecovered = false
+    var repCommitted = false
+    var rearmReady = !repRearmPending
 
-    guard signal.hasRenderableBody else {
+    guard hasRenderableBodyForLogic else {
+      if inBottomCommitWindow && trackingLossGraceFramesRemaining > 0 {
+        trackingLossDuringCommitPath += 1
+        lostTrackingAtBottom = true
+        trackingLossGraceFramesRemaining -= 1
+        commitPathGraceFramesRemaining = max(0, commitPathGraceFramesRemaining - 1)
+        bottomLatchFramesRemaining = max(0, bottomLatchFramesRemaining - 1)
+        bottomConfirmedLatched = bottomReached || bottomLatchFramesRemaining > 0
+        state = quality.renderQuality >= config.quality.renderMin ? .trackingAssisted : .lostTracking
+        currentBottomReacquireState = "tracking_loss_grace"
+        currentBottomBlockedReason = "tracking_loss_grace_active"
+        currentBodyFound = false
+        currentTrackingQualityPass = false
+        currentLogicQualityPass = false
+        currentBottomGate = bottomReached
+        currentAscentGate = ascendingFrames >= config.rep.ascendingConfirmFrames
+        currentRearmGate = !repRearmPending
+        currentCountCommitReady = false
+        currentCommitPathActive = commitPathActive
+        currentPendingCommitReason = "tracking_loss_tolerated"
+        currentCommitBlockedBy = nil
+        currentCommitCancelledReason = nil
+        lastFailedGate = "bodyFound"
+        let resolvedBlockedReasons = ["body_not_found", "tracking_loss_grace_active"]
+        whyRepDidNotCount = firstFinalBlocker ?? "tracking_loss_tolerated"
+        topReady = topReadyLatched || isStartupReady()
+        descendingStarted = descendingFrames > 0 || state == .descending || commitPathActive
+        bottomLatched = bottomReached || bottomConfirmedLatched
+        ascendingStarted = ascendingFrames > 0 || didEnterAscending
+        topRecovered = commitTopRecoveryFrames > 0
+        rearmReady = !repRearmPending
+        currentTopReady = topReady
+        currentDescendingStarted = descendingStarted
+        currentBottomLatched = bottomLatched
+        currentAscendingStarted = ascendingStarted
+        currentTopRecovered = topRecovered
+        currentRepCommitted = false
+        currentRearmReady = rearmReady
+        currentRearmConfirmProgress = repRearmPending
+          ? min(1, Double(topRecoveryFrames) / Double(max(1, config.rep.repRearmConfirmFrames)))
+          : 1
+        currentRepStateMachineState = resolveRepStateMachineState(repCounted: false)
+        currentRepStateTransitionEvent = consumeRepStateMachineTransitionEvent(currentState: currentRepStateMachineState, frameIndex: frameIndex, timestamp: timestamp)
+        return RepDetectionOutput(
+          state: state,
+          repCount: repCount,
+          formEvidenceScore: signal.formEvidenceScore,
+          blockedReasons: resolvedBlockedReasons,
+          repDebug: makeRepDebug(
+            blockedReasons: resolvedBlockedReasons,
+            dominantEvidence: dominantEvidence,
+            measuredEvidence: signal.measuredEvidence,
+            structuralEvidence: signal.structuralEvidence,
+            upperBodyEvidence: signal.upperBodyEvidence,
+            shoulderVelocity: 0,
+            torsoVelocity: 0,
+            topReferenceTorsoY: hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY,
+            topReferenceShoulderY: repStartShoulderY,
+            descendingSignal: false,
+            ascendingSignal: false,
+            shoulderDownTravel: 0,
+            shoulderRecoveryToTop: 0,
+            torsoDownTravel: 0,
+            torsoRecoveryToTop: 0,
+            canProgress: false,
+            logicBlockedFrames: logicBlockedFrames,
+            startupReady: false,
+            startupTopEvidence: plankFrames,
+            startupDescendBridgeUsed: false,
+            startBlockedReason: repCount == 0 ? "body_not_found" : nil,
+            repRearmPending: repRearmPending,
+            topRecoveryFrames: topRecoveryFrames,
+            commitPathActive: currentCommitPathActive,
+            idleResetReason: currentIdleResetReason,
+            pendingCommitReason: currentPendingCommitReason,
+            commitBlockedBy: currentCommitBlockedBy,
+            cycleCoreReady: false,
+            strictCycleReady: false,
+            floorFallbackCycleReady: false,
+            motionTravelGate: false,
+            topRecoveryGate: false,
+            torsoSupportReady: false,
+            shoulderSupportReady: false,
+            countGatePassed: false,
+            countGateBlocked: true,
+            countGateBlockReason: "body_not_found"
+          )
+        )
+      } else if inBottomCommitWindow && bottomReacquireHoldEligible && bottomReacquireHoldFramesRemaining > 0 {
+        trackingLossDuringCommitPath += 1
+        lostTrackingAtBottom = true
+        bottomReacquireHoldFramesRemaining -= 1
+        commitPathGraceFramesRemaining = max(0, commitPathGraceFramesRemaining - 1)
+        bottomLatchFramesRemaining = max(0, bottomLatchFramesRemaining - 1)
+        bottomConfirmedLatched = bottomReached || bottomLatchFramesRemaining > 0
+        state = quality.renderQuality >= config.quality.renderMin ? .trackingAssisted : .lostTracking
+        currentBottomReacquireState = "hold_active"
+        currentBottomBlockedReason = "bottom_reacquire_hold"
+        currentBodyFound = false
+        currentTrackingQualityPass = false
+        currentLogicQualityPass = false
+        currentBottomGate = bottomReached
+        currentAscentGate = ascendingFrames >= config.rep.ascendingConfirmFrames
+        currentRearmGate = !repRearmPending
+        currentCountCommitReady = false
+        currentCommitPathActive = commitPathActive
+        currentPendingCommitReason = "bottom_reacquire_hold"
+        currentCommitBlockedBy = nil
+        currentCommitCancelledReason = nil
+        lastFailedGate = "bodyFound"
+        let resolvedBlockedReasons = ["body_not_found", "bottom_reacquire_hold"]
+        whyRepDidNotCount = firstFinalBlocker ?? "bottom_reacquire_hold"
+        topReady = topReadyLatched || isStartupReady()
+        descendingStarted = descendingFrames > 0 || state == .descending || commitPathActive
+        bottomLatched = bottomReached || bottomConfirmedLatched
+        ascendingStarted = ascendingFrames > 0 || didEnterAscending
+        topRecovered = commitTopRecoveryFrames > 0
+        rearmReady = !repRearmPending
+        currentTopReady = topReady
+        currentDescendingStarted = descendingStarted
+        currentBottomLatched = bottomLatched
+        currentAscendingStarted = ascendingStarted
+        currentTopRecovered = topRecovered
+        currentRepCommitted = false
+        currentRearmReady = rearmReady
+        currentRearmConfirmProgress = repRearmPending
+          ? min(1, Double(topRecoveryFrames) / Double(max(1, config.rep.repRearmConfirmFrames)))
+          : 1
+        currentRepStateMachineState = resolveRepStateMachineState(repCounted: false)
+        currentRepStateTransitionEvent = consumeRepStateMachineTransitionEvent(currentState: currentRepStateMachineState, frameIndex: frameIndex, timestamp: timestamp)
+        return RepDetectionOutput(
+          state: state,
+          repCount: repCount,
+          formEvidenceScore: signal.formEvidenceScore,
+          blockedReasons: resolvedBlockedReasons,
+          repDebug: makeRepDebug(
+            blockedReasons: resolvedBlockedReasons,
+            dominantEvidence: dominantEvidence,
+            measuredEvidence: signal.measuredEvidence,
+            structuralEvidence: signal.structuralEvidence,
+            upperBodyEvidence: signal.upperBodyEvidence,
+            shoulderVelocity: 0,
+            torsoVelocity: 0,
+            topReferenceTorsoY: hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY,
+            topReferenceShoulderY: repStartShoulderY,
+            descendingSignal: false,
+            ascendingSignal: false,
+            shoulderDownTravel: 0,
+            shoulderRecoveryToTop: 0,
+            torsoDownTravel: 0,
+            torsoRecoveryToTop: 0,
+            canProgress: false,
+            logicBlockedFrames: logicBlockedFrames,
+            startupReady: false,
+            startupTopEvidence: plankFrames,
+            startupDescendBridgeUsed: false,
+            startBlockedReason: repCount == 0 ? "body_not_found" : nil,
+            repRearmPending: repRearmPending,
+            topRecoveryFrames: topRecoveryFrames,
+            commitPathActive: currentCommitPathActive,
+            idleResetReason: currentIdleResetReason,
+            pendingCommitReason: currentPendingCommitReason,
+            commitBlockedBy: currentCommitBlockedBy,
+            cycleCoreReady: false,
+            strictCycleReady: false,
+            floorFallbackCycleReady: false,
+            motionTravelGate: false,
+            topRecoveryGate: false,
+            torsoSupportReady: false,
+            shoulderSupportReady: false,
+            countGatePassed: false,
+            countGateBlocked: true,
+            countGateBlockReason: "body_not_found"
+          )
+        )
+      }
+
       state = .lostTracking
       plankFrames = 0
       bottomReached = false
+      bottomConfirmedLatched = false
+      bottomLatchFramesRemaining = 0
       bottomOcclusionFrames = 0
       repRearmPending = false
       topRecoveryFrames = 0
       ascendingSignalGapFrames = 0
       topRecoveryGateGapFrames = 0
+      commitPathActive = false
+      commitPathGraceFramesRemaining = 0
+      trackingLossGraceFramesRemaining = 0
+      bottomReacquireHoldFramesRemaining = 0
+      commitTopRecoveryFrames = 0
       smoothedTorsoStability = 0.4
       torsoUnstableFrames = 0
+      currentBodyFound = false
+      currentTrackingQualityPass = false
+      currentLogicQualityPass = false
+      currentBottomGate = false
+      currentAscentGate = false
+      currentRearmGate = false
+      currentCountCommitReady = false
+      currentCommitPathActive = false
+      currentIdleResetReason = "body_not_found"
+      currentResetReason = "body_not_found"
+      currentTimeoutOrAbortReason = "body_not_found"
+      currentPendingCommitReason = "body_not_found"
+      currentCommitBlockedBy = "trackingGate"
+      currentBottomReacquireState = "inactive"
+      currentBottomBlockedReason = "body_not_found"
+      currentRearmReady = true
+      currentRearmConfirmProgress = 0
+      commitCancelledReason = "body_not_found"
+      currentCommitCancelledReason = commitCancelledReason
+      lastFailedGate = "bodyFound"
+      if attemptActive {
+        let finalReason = firstFinalBlocker ?? "body_not_found"
+        whyRepDidNotCount = finalReason
+        recordAttemptBlocked(reason: finalReason)
+        repCommitBlockedCount += 1
+        attemptActive = false
+        firstFinalBlocker = nil
+      } else {
+        whyRepDidNotCount = "body_not_found"
+      }
+      topReadyLatched = false
+      cycleFramesSinceDescendingStart = 0
+      cycleFramesSinceBottomLatch = 0
+      currentRepStateMachineState = resolveRepStateMachineState(repCounted: false)
+      currentRepStateTransitionEvent = consumeRepStateMachineTransitionEvent(currentState: currentRepStateMachineState, frameIndex: frameIndex, timestamp: timestamp)
       let resolvedBlockedReasons = ["body_not_found"]
       return RepDetectionOutput(
         state: state,
         repCount: repCount,
         formEvidenceScore: signal.formEvidenceScore,
         blockedReasons: resolvedBlockedReasons,
-        repDebug: PushupRepDebug(
-          smoothedElbowAngle: Double(smoothedElbowAngle),
-          repMinElbowAngle: Double(repMinElbowAngle),
-          smoothedTorsoY: Double(smoothedTorsoY),
-          smoothedShoulderY: Double(smoothedShoulderY),
-          topReferenceTorsoY: Double(hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY),
-          topReferenceShoulderY: Double(repStartShoulderY),
+        repDebug: makeRepDebug(
+          blockedReasons: resolvedBlockedReasons,
+          dominantEvidence: dominantEvidence,
+          measuredEvidence: signal.measuredEvidence,
+          structuralEvidence: signal.structuralEvidence,
+          upperBodyEvidence: signal.upperBodyEvidence,
           shoulderVelocity: 0,
           torsoVelocity: 0,
+          topReferenceTorsoY: hasFloorBaselineTorsoY ? floorBaselineTorsoY : repStartTorsoY,
+          topReferenceShoulderY: repStartShoulderY,
           descendingSignal: false,
           ascendingSignal: false,
           shoulderDownTravel: 0,
           shoulderRecoveryToTop: 0,
           torsoDownTravel: 0,
           torsoRecoveryToTop: 0,
-          descendingFrames: descendingFrames,
-          bottomFrames: bottomFrames,
-          ascendingFrames: ascendingFrames,
-          bottomReached: bottomReached,
-          dominantEvidence: dominantEvidence,
-          measuredEvidence: signal.measuredEvidence,
-          structuralEvidence: signal.structuralEvidence,
-          upperBodyEvidence: signal.upperBodyEvidence,
-          blockedReasons: resolvedBlockedReasons,
           canProgress: false,
           logicBlockedFrames: logicBlockedFrames,
           startupReady: false,
@@ -136,6 +621,10 @@ final class PushupRepDetector {
           startBlockedReason: repCount == 0 ? "body_not_found" : nil,
           repRearmPending: repRearmPending,
           topRecoveryFrames: topRecoveryFrames,
+          commitPathActive: currentCommitPathActive,
+          idleResetReason: currentIdleResetReason,
+          pendingCommitReason: currentPendingCommitReason,
+          commitBlockedBy: currentCommitBlockedBy,
           cycleCoreReady: false,
           strictCycleReady: false,
           floorFallbackCycleReady: false,
@@ -145,13 +634,24 @@ final class PushupRepDetector {
           shoulderSupportReady: false,
           countGatePassed: false,
           countGateBlocked: true,
-          countGateBlockReason: "body_not_found",
-          stateTransitionEvent: consumeStateTransitionEvent(currentState: state)
+          countGateBlockReason: "body_not_found"
         )
       )
     }
 
     previousSmoothedElbowAngle = smoothedElbowAngle
+    if previousRawShoulderY == 0 {
+      previousRawShoulderY = signal.shoulderY
+    }
+    if previousRawTorsoY == 0 {
+      previousRawTorsoY = signal.torsoY
+    }
+    currentRawShoulderY = signal.shoulderY
+    currentRawTorsoY = signal.torsoY
+    currentRawShoulderVelocity = currentRawShoulderY - previousRawShoulderY
+    currentRawTorsoVelocity = currentRawTorsoY - previousRawTorsoY
+    previousRawShoulderY = currentRawShoulderY
+    previousRawTorsoY = currentRawTorsoY
     if signal.hasElbowMeasurement {
       smoothedElbowAngle = smoothedElbowAngle * (1 - config.rep.elbowSmoothAlpha) + signal.elbowAngle * config.rep.elbowSmoothAlpha
     }
@@ -199,6 +699,9 @@ final class PushupRepDetector {
     var countGatePassed = false
     var countGateBlocked = false
     var countGateBlockReason: String?
+    let rearmTopRecoveryOffset = config.rep.maxTorsoTopRecoveryOffset * config.rep.rearmTopRecoveryOffsetMultiplier
+    let topRecoveryGateOffset = repRearmPending ? rearmTopRecoveryOffset : config.rep.maxTorsoTopRecoveryOffset
+    let nearTopRecoveryGate = smoothedTorsoY >= torsoTopReference - (topRecoveryGateOffset + 0.011)
 
     let activeRepCycle =
       bottomReached ||
@@ -278,7 +781,7 @@ final class PushupRepDetector {
     let progressionLogicGraceFrames = config.rep.logicGateGraceFrames + progressionGraceBoostFrames
     let canProgress = logicReady || logicBlockedFrames <= progressionLogicGraceFrames
     let ascendingSignalGraceFrames = max(1, config.rep.ascendingConfirmFrames - 1)
-    let topRecoveryGateGraceFrames = max(1, config.rep.repRearmConfirmFrames)
+    let topRecoveryGateGraceFrames = max(1, config.rep.rearmDecayGraceFrames)
     var startupDescendBridgeUsed = false
 
     if !canProgress {
@@ -295,39 +798,121 @@ final class PushupRepDetector {
       let severeDecayStep = state == .lostTracking ? 3 : 2
       let mildDecayStep = 1
       let decayStep = blockedOverrun <= shortHoldWindow ? mildDecayStep : severeDecayStep
+      let commitGraceActive =
+        commitPathActive &&
+        (commitPathGraceFramesRemaining > 0 || trackingLossGraceFramesRemaining > 0 || bottomConfirmedLatched)
 
-      descendingFrames = max(0, descendingFrames - decayStep)
-      bottomFrames = max(0, bottomFrames - decayStep)
-      if bottomReached && ascendingFrames > 0 && blockedOverrun <= shortHoldWindow {
+      if commitGraceActive {
+        commitPathGraceFramesRemaining -= 1
+        trackingLossGraceFramesRemaining = max(0, trackingLossGraceFramesRemaining - 1)
+        bottomLatchFramesRemaining = max(0, bottomLatchFramesRemaining - 1)
+        bottomConfirmedLatched = bottomReached || bottomLatchFramesRemaining > 0
+        if !signal.hasElbowMeasurement {
+          trackingLossDuringCommitPath += 1
+          lostTrackingAtBottom = true
+        }
         ascendingSignalGapFrames = min(ascendingSignalGapFrames + 1, ascendingSignalGraceFrames)
       } else {
-        ascendingFrames = max(0, ascendingFrames - decayStep)
-        if ascendingFrames == 0 {
-          ascendingSignalGapFrames = 0
+        descendingFrames = max(0, descendingFrames - decayStep)
+        bottomFrames = max(0, bottomFrames - decayStep)
+        if bottomReached && ascendingFrames > 0 && blockedOverrun <= shortHoldWindow {
+          ascendingSignalGapFrames = min(ascendingSignalGapFrames + 1, ascendingSignalGraceFrames)
+        } else {
+          ascendingFrames = max(0, ascendingFrames - decayStep)
+          if ascendingFrames == 0 {
+            ascendingSignalGapFrames = 0
+          }
         }
       }
 
       if repRearmPending {
-        topRecoveryGateGapFrames += 1
-        if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
-          topRecoveryFrames = max(0, topRecoveryFrames - 1)
+        let rearmHoldEligible =
+          hasRenderableBodyForLogic &&
+          qualityNotCollapsed &&
+          (inActivePushupPhase || nearTopRecoveryGate || floorState)
+        if rearmHoldEligible && rearmTopRecoveryDipGraceFramesRemaining > 0 {
+          rearmTopRecoveryDipGraceFramesRemaining -= 1
+        } else {
+          topRecoveryGateGapFrames += 1
+          if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
+            topRecoveryFrames = max(0, topRecoveryFrames - 1)
+          }
         }
       } else {
         topRecoveryFrames = 0
         topRecoveryGateGapFrames = 0
+        rearmTopRecoveryDipGraceFramesRemaining = 0
+        rearmDescendingSignalGraceFramesRemaining = 0
       }
 
       if bottomReached {
         bottomOcclusionFrames += 1
         let noProgressFramesLeft = descendingFrames == 0 && bottomFrames == 0 && ascendingFrames == 0
         let occlusionExpired = bottomOcclusionFrames > config.rep.bottomOcclusionGraceFrames
-        if noProgressFramesLeft || occlusionExpired {
-          bottomReached = false
-          bottomOcclusionFrames = 0
+        if (noProgressFramesLeft || occlusionExpired) && !commitGraceActive {
+          let bottomHoldBlockedReason = occlusionExpired ? "bottom_occlusion_timeout" : "cycle_drained_while_logic_blocked"
+          if bottomReacquireHoldEligible && bottomReacquireHoldFramesRemaining > 0 {
+            bottomReacquireHoldFramesRemaining -= 1
+            bottomConfirmedLatched = true
+            bottomLatchFramesRemaining = max(bottomLatchFramesRemaining, 1)
+            commitPathActive = true
+            commitPathGraceFramesRemaining = max(commitPathGraceFramesRemaining, 1)
+            trackingLossGraceFramesRemaining = max(trackingLossGraceFramesRemaining, 1)
+            currentBottomReacquireState = "hold_active"
+            currentBottomBlockedReason = bottomHoldBlockedReason
+          } else {
+            bottomReached = false
+            bottomConfirmedLatched = false
+            bottomLatchFramesRemaining = 0
+            bottomOcclusionFrames = 0
+            commitPathActive = false
+            commitPathGraceFramesRemaining = 0
+            trackingLossGraceFramesRemaining = 0
+            bottomReacquireHoldFramesRemaining = 0
+            commitTopRecoveryFrames = 0
+            currentBottomReacquireState = "expired"
+            currentBottomBlockedReason = bottomHoldBlockedReason
+            currentIdleResetReason = bottomHoldBlockedReason
+            commitCancelledReason = currentIdleResetReason
+            currentCommitCancelledReason = commitCancelledReason
+            if repCommitAttemptCount > repCommitSuccessCount {
+              repCommitBlockedCount += 1
+            }
+          }
         }
       } else {
         bottomOcclusionFrames = 0
       }
+
+      currentBodyFound = hasRenderableBodyForLogic
+      let trackingQualityGate = floorState ? config.rep.floorMinTrackingQualityToCount : config.rep.minTrackingQualityToCount
+      currentTrackingQualityPass = quality.trackingQuality >= trackingQualityGate
+      currentLogicQualityPass = quality.logicQuality >= config.rep.minLogicQualityToProgress
+      currentBottomGate = bottomReached
+      currentAscentGate = ascendingFrames >= config.rep.ascendingConfirmFrames
+      currentRearmGate = !repRearmPending
+      currentCountCommitReady = false
+      currentCommitPathActive = commitPathActive
+      lastFailedGate = "logicGate"
+      currentCommitBlockedBy = commitPathActive ? nil : "logicGate"
+      currentPendingCommitReason = commitPathActive ? "quality_dip_tolerated" : "logic_gate_blocked"
+      whyRepDidNotCount = firstFinalBlocker ?? currentPendingCommitReason
+      currentTopReady = topReadyLatched || isStartupReady()
+      currentDescendingStarted = descendingFrames > 0 || state == .descending || commitPathActive
+      currentBottomLatched = bottomReached || bottomConfirmedLatched
+      currentAscendingStarted = ascendingFrames > 0 || didEnterAscending
+      currentTopRecovered = commitTopRecoveryFrames > 0
+      currentRepCommitted = false
+      currentRearmReady = !repRearmPending
+      currentRearmConfirmProgress = repRearmPending
+        ? min(1, Double(topRecoveryFrames) / Double(max(1, config.rep.repRearmConfirmFrames)))
+        : 1
+      currentRepStateMachineState = resolveRepStateMachineState(repCounted: false)
+      currentRepStateTransitionEvent = consumeRepStateMachineTransitionEvent(
+        currentState: currentRepStateMachineState,
+        frameIndex: frameIndex,
+        timestamp: timestamp
+      )
 
       return RepDetectionOutput(
         state: state,
@@ -358,6 +943,10 @@ final class PushupRepDetector {
           startBlockedReason: startupBlockedReason(),
           repRearmPending: repRearmPending,
           topRecoveryFrames: topRecoveryFrames,
+          commitPathActive: currentCommitPathActive,
+          idleResetReason: currentIdleResetReason,
+          pendingCommitReason: currentPendingCommitReason,
+          commitBlockedBy: currentCommitBlockedBy,
           cycleCoreReady: cycleCoreReady,
           strictCycleReady: strictCycleReady,
           floorFallbackCycleReady: floorFallbackCycleReady,
@@ -374,6 +963,7 @@ final class PushupRepDetector {
 
     if signal.hasElbowMeasurement, smoothedElbowAngle > config.rep.plankAngleMin, signal.torsoStability > minTorsoStability {
       plankFrames += 1
+      topReadyLatched = true
       descendingFrames = max(0, descendingFrames - 1)
       bottomFrames = max(0, bottomFrames - 1)
       ascendingFrames = max(0, ascendingFrames - 1)
@@ -395,12 +985,18 @@ final class PushupRepDetector {
       }
       if repRearmPending {
         topRecoveryFrames += 1
+        rearmTopRecoveryDipGraceFramesRemaining = max(rearmTopRecoveryDipGraceFramesRemaining, 2)
+        rearmDescendingSignalGraceFramesRemaining = max(rearmDescendingSignalGraceFramesRemaining, 1)
         if topRecoveryFrames >= config.rep.repRearmConfirmFrames {
           repRearmPending = false
           topRecoveryFrames = 0
+          rearmTopRecoveryDipGraceFramesRemaining = 0
+          rearmDescendingSignalGraceFramesRemaining = 0
         }
       } else {
         topRecoveryFrames = 0
+        rearmTopRecoveryDipGraceFramesRemaining = 0
+        rearmDescendingSignalGraceFramesRemaining = 0
       }
       if plankFrames >= config.rep.plankLockFrames {
         state = .plankLocked
@@ -428,6 +1024,15 @@ final class PushupRepDetector {
 
       if descendingSignal {
         if descendingFrames == 0 {
+          if !topReadyLatched {
+            topReadyLatched = isStartupReady()
+          }
+          cycleFramesSinceDescendingStart = 0
+          if !attemptActive {
+            attemptActive = true
+            repsAttemptedEstimate += 1
+            firstFinalBlocker = nil
+          }
           repStartElbowAngle = max(previousSmoothedElbowAngle, smoothedElbowAngle)
           repMinElbowAngle = smoothedElbowAngle
           repStartShoulderY = smoothedShoulderY
@@ -459,6 +1064,9 @@ final class PushupRepDetector {
           torsoDownTravel >= config.rep.minTorsoDownTravelForBottom
             || shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom
         )
+      let fastBottomTravelReached =
+        torsoDownTravel >= config.rep.minTorsoDownTravelForBottom * config.rep.fastBottomTravelMultiplier
+        || shoulderDownTravel >= config.rep.minShoulderDownTravelForBottom * config.rep.fastBottomTravelMultiplier
       let descentConfirmed = state == .descending || descendingFrames >= config.rep.descentConfirmFrames
       let motionBottomCandidate = descentConfirmed && bottomTravelReached
 
@@ -471,24 +1079,71 @@ final class PushupRepDetector {
         }
         repMaxShoulderY = min(repMaxShoulderY, smoothedShoulderY)
         repMaxTorsoY = min(repMaxTorsoY, smoothedTorsoY)
-        if bottomFrames >= config.rep.bottomConfirmFrames && bottomTravelReached {
+        let fastBottomConfirm = motionBottomCandidate && fastBottomTravelReached
+        if (bottomFrames >= config.rep.bottomConfirmFrames || fastBottomConfirm) && bottomTravelReached {
+          let enteringBottomConfirmed = !bottomReached
           state = .bottomReached
           bottomReached = true
+          if enteringBottomConfirmed && !bottomConfirmedLatched {
+            bottomConfirmedCount += 1
+          }
+          bottomConfirmedLatched = true
+          bottomLatchFramesRemaining = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 2)
+          bottomReacquireHoldFramesRemaining = max(
+            bottomReacquireHoldFramesRemaining,
+            max(bottomReacquireHoldMinFrames, min(bottomReacquireHoldMaxFrames, config.rep.ascendingConfirmFrames + 1))
+          )
+          commitPathActive = true
+          commitPathGraceFramesRemaining = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 1)
+          trackingLossGraceFramesRemaining = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 2)
+          currentBottomReacquireState = "primed"
+          currentBottomBlockedReason = nil
+          commitTopRecoveryFrames = 0
+          if enteringBottomConfirmed {
+            cycleFramesSinceBottomLatch = 0
+            trackingLossDuringCommitPath = 0
+            didEnterAscending = false
+            didEnterTopRecovery = false
+            commitCancelledReason = nil
+            currentCommitCancelledReason = nil
+            firstBlockingConditionAfterBottom = nil
+            currentFirstBlockingConditionAfterBottom = nil
+            repCommitAttemptCount += 1
+          }
+          currentPendingCommitReason = "awaiting_ascent"
         }
       } else if !bottomReached {
+        if motionBottomCandidate && bottomFrames >= max(0, config.rep.bottomConfirmFrames - 1) {
+          currentBottomNearMiss = true
+        }
         bottomFrames = max(0, bottomFrames - 1)
       }
 
       if bottomReached && ascendingSignal {
         ascendingSignalGapFrames = 0
         ascendingFrames += 1
+        commitPathActive = true
+        if commitPathGraceFramesRemaining > 0 {
+          commitPathGraceFramesRemaining -= 1
+        }
+        trackingLossGraceFramesRemaining = max(0, trackingLossGraceFramesRemaining - 1)
+        bottomLatchFramesRemaining = max(0, bottomLatchFramesRemaining - 1)
+        bottomConfirmedLatched = bottomReached || bottomLatchFramesRemaining > 0
         if ascendingFrames >= config.rep.ascendingConfirmFrames {
+          if !didEnterAscending {
+            didEnterAscending = true
+            ascendingEnteredCount += 1
+          }
           state = .ascending
         }
       } else if bottomReached {
         ascendingSignalGapFrames += 1
         if ascendingSignalGapFrames > ascendingSignalGraceFrames {
-          ascendingFrames = max(0, ascendingFrames - 1)
+          if commitPathActive && commitPathGraceFramesRemaining > 0 {
+            commitPathGraceFramesRemaining -= 1
+          } else {
+            ascendingFrames = max(0, ascendingFrames - 1)
+          }
         }
       } else {
         ascendingSignalGapFrames = 0
@@ -517,18 +1172,47 @@ final class PushupRepDetector {
         shoulderDownTravel >= config.rep.minShoulderCycleTravel &&
         shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel
       torsoSupportReady =
-        shoulderDownTravel >= config.rep.minShoulderCycleTravel * 0.6 &&
-        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel * 0.6
+        shoulderDownTravel >= config.rep.minShoulderCycleTravel * config.rep.crossAxisSupportFactor &&
+        shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel * config.rep.crossAxisSupportFactor
       shoulderSupportReady =
-        torsoDownTravel >= config.rep.minTorsoCycleTravel * 0.6 &&
-        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel * 0.6
+        torsoDownTravel >= config.rep.minTorsoCycleTravel * config.rep.crossAxisSupportFactor &&
+        torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel * config.rep.crossAxisSupportFactor
       motionTravelGate =
         (torsoCycleReady && torsoSupportReady) ||
         (shoulderCycleReady && shoulderSupportReady)
-      topRecoveryGate = smoothedTorsoY >= torsoTopReference - config.rep.maxTorsoTopRecoveryOffset
+      topRecoveryGate = smoothedTorsoY >= torsoTopReference - topRecoveryGateOffset
+      if commitPathActive && bottomReached && ascendingFrames >= config.rep.ascendingConfirmFrames {
+        if topRecoveryGate {
+          commitTopRecoveryFrames += 1
+          if !didEnterTopRecovery {
+            didEnterTopRecovery = true
+            topRecoveryEnteredCount += 1
+          }
+          currentPendingCommitReason = "top_recovery"
+        } else {
+          commitTopRecoveryFrames = 0
+          currentPendingCommitReason = "awaiting_top_recovery"
+        }
+      } else if commitPathActive {
+        commitTopRecoveryFrames = 0
+        currentPendingCommitReason = "awaiting_ascent"
+      } else {
+        commitTopRecoveryFrames = 0
+      }
+      let commitTopRecoveryReady = commitTopRecoveryFrames > 0
       let qualityGate = quality.logicQuality >= config.rep.minLogicQualityToCount
       let trackingGate = quality.trackingQuality >= trackingQualityGate
       let evidenceReady = dominantEvidence >= evidenceGate && signal.measuredEvidence >= evidenceGate * 0.85
+      let rearmSignalHealthy =
+        quality.logicQuality >= max(0.2, config.rep.minLogicQualityToProgress * 0.78) &&
+        quality.trackingQuality >= trackingQualityGate * 0.72 &&
+        dominantEvidence >= evidenceGate * 0.64
+      if repRearmPending {
+        if (topRecoveryGate || nearTopRecoveryGate) && rearmSignalHealthy && hasRenderableBodyForLogic {
+          rearmTopRecoveryDipGraceFramesRemaining = max(rearmTopRecoveryDipGraceFramesRemaining, 2)
+          rearmDescendingSignalGraceFramesRemaining = max(rearmDescendingSignalGraceFramesRemaining, 1)
+        }
+      }
       strictCycleReady =
         cycleCoreReady &&
         motionTravelGate &&
@@ -542,6 +1226,7 @@ final class PushupRepDetector {
         floorState &&
         cycleCoreReady &&
         descendingFrames >= config.rep.descentConfirmFrames &&
+        topRecoveryGate &&
         quality.logicQuality >= config.rep.minLogicQualityToProgress &&
         quality.trackingQuality >= trackingQualityGate * 0.9 &&
         dominantEvidence >= config.rep.floorMinMeasuredEvidence * 0.85 &&
@@ -555,30 +1240,86 @@ final class PushupRepDetector {
         )
 
       if repRearmPending {
-        if topRecoveryGate && !descendingSignal {
+        let descendingBlocksRearm: Bool = {
+          guard descendingSignal else { return false }
+          if rearmDescendingSignalGraceFramesRemaining > 0 && (topRecoveryGate || nearTopRecoveryGate) && rearmSignalHealthy {
+            rearmDescendingSignalGraceFramesRemaining -= 1
+            return false
+          }
+          return true
+        }()
+        let topRecoveryGateForRearm: Bool = {
+          if topRecoveryGate { return true }
+          if rearmTopRecoveryDipGraceFramesRemaining > 0 && nearTopRecoveryGate && rearmSignalHealthy && hasRenderableBodyForLogic {
+            rearmTopRecoveryDipGraceFramesRemaining -= 1
+            return true
+          }
+          return false
+        }()
+        if topRecoveryGateForRearm && !descendingBlocksRearm {
           topRecoveryGateGapFrames = 0
           topRecoveryFrames += 1
           if topRecoveryFrames >= config.rep.repRearmConfirmFrames {
             repRearmPending = false
             topRecoveryFrames = 0
             topRecoveryGateGapFrames = 0
+            rearmTopRecoveryDipGraceFramesRemaining = 0
+            rearmDescendingSignalGraceFramesRemaining = 0
           }
         } else {
           topRecoveryGateGapFrames += 1
           if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
             topRecoveryFrames = max(0, topRecoveryFrames - 1)
           }
+          if descendingBlocksRearm {
+            rearmDescendingSignalGraceFramesRemaining = 0
+          }
         }
       } else {
         topRecoveryFrames = 0
         topRecoveryGateGapFrames = 0
+        rearmTopRecoveryDipGraceFramesRemaining = 0
+        rearmDescendingSignalGraceFramesRemaining = 0
       }
 
-      countGatePassed = !repRearmPending && (strictCycleReady || floorFallbackCycleReady)
+      topReady = topReadyLatched || isStartupReady()
+      descendingStarted = descendingFrames >= config.rep.descentConfirmFrames || state == .descending || (commitPathActive && descendingFrames > 0)
+      bottomLatched = bottomReached || bottomConfirmedLatched
+      ascendingStarted = ascendingFrames > 0 || didEnterAscending
+      topRecovered =
+        bottomLatched &&
+        ascendingStarted &&
+        topRecoveryGate &&
+        (
+          commitTopRecoveryReady ||
+          torsoRecoveryToTop >= config.rep.minTorsoRecoveryTravel * 0.7 ||
+          shoulderRecoveryToTop >= config.rep.minShoulderRecoveryTravel * 0.7
+        )
+      rearmReady = !repRearmPending
+      let commitSafetyGate =
+        quality.logicQuality >= config.rep.minLogicQualityToProgress &&
+        quality.trackingQuality >= trackingQualityGate * 0.82 &&
+        dominantEvidence >= evidenceGate * 0.72
+      countGatePassed = rearmReady && topReady && descendingStarted && bottomLatched && ascendingStarted && topRecovered && commitSafetyGate
       if countGatePassed {
         repCount += 1
+        repCommitSuccessCount += 1
+        repCommitted = true
+        whyRepDidNotCount = nil
+        lastSuccessfulGate = "countCommitReady"
+        currentPendingCommitReason = nil
+        currentCommitBlockedBy = nil
+        currentIdleResetReason = nil
+        commitCancelledReason = nil
+        currentCommitCancelledReason = nil
+        attemptActive = false
+        firstFinalBlocker = nil
+        firstBlockingConditionAfterBottom = nil
+        currentFirstBlockingConditionAfterBottom = nil
         state = .repCounted
         bottomReached = false
+        bottomConfirmedLatched = false
+        bottomLatchFramesRemaining = 0
         plankFrames = config.rep.plankLockFrames
         descendingFrames = 0
         bottomFrames = 0
@@ -592,8 +1333,19 @@ final class PushupRepDetector {
         bottomOcclusionFrames = 0
         repRearmPending = true
         topRecoveryFrames = 0
+        rearmTopRecoveryDipGraceFramesRemaining = 2
+        rearmDescendingSignalGraceFramesRemaining = 1
         ascendingSignalGapFrames = 0
         topRecoveryGateGapFrames = 0
+        commitPathActive = false
+        commitPathGraceFramesRemaining = 0
+        trackingLossGraceFramesRemaining = 0
+        bottomReacquireHoldFramesRemaining = 0
+        commitTopRecoveryFrames = 0
+        currentBottomReacquireState = "inactive"
+        cycleFramesSinceDescendingStart = 0
+        cycleFramesSinceBottomLatch = 0
+        topReadyLatched = false
         if floorState {
           if hasFloorBaselineTorsoY {
             floorBaselineTorsoY = floorBaselineTorsoY * 0.8 + smoothedTorsoY * 0.2
@@ -607,31 +1359,62 @@ final class PushupRepDetector {
       }
 
       if !countGatePassed {
-        let gateReason = makeCountGateBlockReason(
-          repRearmPending: repRearmPending,
-          bottomReached: bottomReached,
-          ascendingFrames: ascendingFrames,
-          torsoDownTravel: torsoDownTravel,
-          torsoRecoveryToTop: torsoRecoveryToTop,
-          shoulderDownTravel: shoulderDownTravel,
-          shoulderRecoveryToTop: shoulderRecoveryToTop,
-          logicQuality: quality.logicQuality,
-          trackingQuality: quality.trackingQuality,
-          dominantEvidence: dominantEvidence,
-          measuredEvidence: signal.measuredEvidence,
-          evidenceGate: evidenceGate,
-          trackingQualityGate: trackingQualityGate,
-          cycleCoreReady: cycleCoreReady,
-          strictCycleReady: strictCycleReady,
-          floorFallbackCycleReady: floorFallbackCycleReady,
-          motionTravelGate: motionTravelGate,
-          topRecoveryGate: topRecoveryGate
+        if descendingStarted && !bottomLatched {
+          cycleFramesSinceDescendingStart += 1
+        } else if !descendingStarted {
+          cycleFramesSinceDescendingStart = 0
+        }
+        if bottomLatched && commitPathActive {
+          cycleFramesSinceBottomLatch += 1
+        } else if !bottomLatched {
+          cycleFramesSinceBottomLatch = 0
+        }
+        let gateReason = makeV1CommitBlockReason(
+          topReady: topReady,
+          descendingStarted: descendingStarted,
+          bottomLatched: bottomLatched,
+          ascendingStarted: ascendingStarted,
+          topRecovered: topRecovered,
+          rearmReady: rearmReady,
+          commitSafetyGate: commitSafetyGate
         )
         if gateReason != "gate_not_applicable" {
           countGateBlocked = true
           countGateBlockReason = gateReason
+          lastFailedGate = gateReason
+          currentCommitBlockedBy = commitBlocker(gateReason: gateReason)
+          if commitPathActive {
+            currentPendingCommitReason = gateReason
+          }
+          if currentFirstBlockingConditionAfterBottom == nil && commitPathActive {
+            currentFirstBlockingConditionAfterBottom = gateReason
+            firstBlockingConditionAfterBottom = gateReason
+          }
+          if firstFinalBlocker == nil && attemptActive {
+            firstFinalBlocker = gateReason
+          }
+          whyRepDidNotCount = firstFinalBlocker ?? gateReason
           if !blockedReasons.contains(gateReason) {
             blockedReasons.append(gateReason)
+          }
+        }
+        let noRecoveryTimeoutFrames = max(14, config.rep.bottomOcclusionGraceFrames + config.rep.ascendingConfirmFrames + 6)
+        if bottomLatched && !topRecovered && cycleFramesSinceBottomLatch > noRecoveryTimeoutFrames {
+          abortCurrentCycle(reason: "no_recovery_within_timeout")
+          countGateBlocked = true
+          countGateBlockReason = "no_recovery_within_timeout"
+          if !blockedReasons.contains("no_recovery_within_timeout") {
+            blockedReasons.append("no_recovery_within_timeout")
+          }
+        } else if descendingStarted && !bottomLatched {
+          let collapseTimeoutFrames = max(20, config.rep.descentConfirmFrames * 10)
+          if cycleFramesSinceDescendingStart > collapseTimeoutFrames && !descendingSignal {
+            abortCurrentCycle(reason: "movement_collapsed")
+            countGateBlocked = true
+            countGateBlockReason = "movement_collapsed"
+            if !blockedReasons.contains("movement_collapsed") {
+              blockedReasons.append("movement_collapsed")
+            }
           }
         }
       }
@@ -642,19 +1425,124 @@ final class PushupRepDetector {
       ascendingFrames = max(0, ascendingFrames - 1)
       if !bottomReached {
         bottomOcclusionFrames = 0
+        bottomLatchFramesRemaining = max(0, bottomLatchFramesRemaining - 1)
+        bottomConfirmedLatched = bottomLatchFramesRemaining > 0
       }
       if repRearmPending {
-        topRecoveryGateGapFrames += 1
-        if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
-          topRecoveryFrames = max(0, topRecoveryFrames - 1)
+        let rearmHoldEligible =
+          hasRenderableBodyForLogic &&
+          qualityNotCollapsed &&
+          (inActivePushupPhase || nearTopRecoveryGate || floorState)
+        if rearmHoldEligible && rearmTopRecoveryDipGraceFramesRemaining > 0 {
+          rearmTopRecoveryDipGraceFramesRemaining -= 1
+        } else {
+          topRecoveryGateGapFrames += 1
+          if topRecoveryGateGapFrames > topRecoveryGateGraceFrames {
+            topRecoveryFrames = max(0, topRecoveryFrames - 1)
+          }
         }
       } else {
         topRecoveryFrames = 0
         topRecoveryGateGapFrames = 0
+        rearmTopRecoveryDipGraceFramesRemaining = 0
+        rearmDescendingSignalGraceFramesRemaining = 0
       }
       ascendingSignalGapFrames = 0
       state = .bodyFound
+      let cycleInactive = descendingFrames == 0 && bottomFrames == 0 && ascendingFrames == 0 && !bottomReached
+      if cycleInactive {
+        commitPathActive = false
+        commitPathGraceFramesRemaining = 0
+        trackingLossGraceFramesRemaining = 0
+        bottomReacquireHoldFramesRemaining = 0
+        commitTopRecoveryFrames = 0
+        currentBottomReacquireState = "inactive"
+        bottomConfirmedLatched = false
+        bottomLatchFramesRemaining = 0
+        cycleFramesSinceDescendingStart = 0
+        cycleFramesSinceBottomLatch = 0
+      }
+      if attemptActive && cycleInactive {
+        abortCurrentCycle(reason: firstFinalBlocker ?? lastFailedGate ?? "motion_pattern_invalid")
+      }
     }
+
+    topReady = topReadyLatched || isStartupReady()
+    descendingStarted = descendingFrames > 0 || state == .descending || commitPathActive
+    bottomLatched = bottomReached || bottomConfirmedLatched
+    ascendingStarted = ascendingFrames > 0 || didEnterAscending
+    topRecovered = topRecoveryGate && bottomLatched && ascendingStarted && commitTopRecoveryFrames > 0
+    rearmReady = !repRearmPending
+    currentBodyFound = hasRenderableBodyForLogic
+    let trackingQualityGate = floorState ? config.rep.floorMinTrackingQualityToCount : config.rep.minTrackingQualityToCount
+    currentTrackingQualityPass = quality.trackingQuality >= trackingQualityGate
+    currentLogicQualityPass = quality.logicQuality >= config.rep.minLogicQualityToProgress
+    currentBottomGate = bottomReached
+    currentAscentGate = ascendingFrames >= config.rep.ascendingConfirmFrames
+    currentRearmGate = !repRearmPending
+    currentCountCommitReady = countGatePassed
+    currentCommitPathActive = commitPathActive
+    currentCommitCancelledReason = commitCancelledReason
+    currentFirstBlockingConditionAfterBottom = firstBlockingConditionAfterBottom
+    if currentRearmGate {
+      lastSuccessfulGate = "rearmGate"
+    }
+    if repRearmPending {
+      let topRecoveryBlocked = !topRecoveryGate && rearmTopRecoveryDipGraceFramesRemaining == 0
+      if topRecoveryBlocked {
+        currentRearmBlockedReason = "top_recovery_gate_not_met"
+        currentRearmMissingCondition = "top_recovery_gate"
+      } else if descendingSignal && rearmDescendingSignalGraceFramesRemaining == 0 {
+        currentRearmBlockedReason = "descending_not_cleared"
+        currentRearmMissingCondition = "stop_descending"
+      } else if !currentTrackingQualityPass || !currentLogicQualityPass {
+        currentRearmBlockedReason = "rearm_quality_dip"
+        currentRearmMissingCondition = "stabilize_quality"
+      } else {
+        currentRearmBlockedReason = "rearm_confirming"
+        currentRearmMissingCondition = "confirm_top_recovery"
+      }
+    } else {
+      currentRearmBlockedReason = nil
+      currentRearmMissingCondition = nil
+    }
+    if currentCommitBlockedBy == nil && repRearmPending {
+      currentCommitBlockedBy = "rearmGate"
+    }
+    if currentPendingCommitReason == nil && commitPathActive {
+      if ascendingFrames < config.rep.ascendingConfirmFrames {
+        currentPendingCommitReason = "awaiting_ascent"
+      } else if commitTopRecoveryFrames == 0 {
+        currentPendingCommitReason = "awaiting_top_recovery"
+      } else {
+        currentPendingCommitReason = "awaiting_rep_commit"
+      }
+    }
+    currentTopReady = topReady
+    currentDescendingStarted = descendingStarted
+    currentBottomLatched = bottomLatched
+    currentAscendingStarted = ascendingStarted
+    currentTopRecovered = topRecovered
+    currentRepCommitted = repCommitted
+    currentRearmReady = rearmReady
+    currentRearmConfirmProgress = repRearmPending
+      ? min(1, Double(topRecoveryFrames) / Double(max(1, config.rep.repRearmConfirmFrames)))
+      : 1
+    if currentResetReason == nil {
+      currentResetReason = currentIdleResetReason
+    }
+    currentRepStateMachineState = resolveRepStateMachineState(repCounted: state == .repCounted)
+    if !commitPathActive {
+      currentPendingCommitReason = nil
+      if currentRepStateMachineState == "idle" && currentIdleResetReason == nil && previousRepStateMachineStateForDebugEvent != "idle" {
+        currentIdleResetReason = "cycle_reset_to_idle"
+      }
+    }
+    currentRepStateTransitionEvent = consumeRepStateMachineTransitionEvent(
+      currentState: currentRepStateMachineState,
+      frameIndex: frameIndex,
+      timestamp: timestamp
+    )
 
     return RepDetectionOutput(
       state: state,
@@ -685,6 +1573,10 @@ final class PushupRepDetector {
         startBlockedReason: startupBlockedReason(),
         repRearmPending: repRearmPending,
         topRecoveryFrames: topRecoveryFrames,
+        commitPathActive: currentCommitPathActive,
+        idleResetReason: currentIdleResetReason,
+        pendingCommitReason: currentPendingCommitReason,
+        commitBlockedBy: currentCommitBlockedBy,
         cycleCoreReady: cycleCoreReady,
         strictCycleReady: strictCycleReady,
         floorFallbackCycleReady: floorFallbackCycleReady,
@@ -723,6 +1615,10 @@ final class PushupRepDetector {
     startBlockedReason: String?,
     repRearmPending: Bool,
     topRecoveryFrames: Int,
+    commitPathActive: Bool,
+    idleResetReason: String?,
+    pendingCommitReason: String?,
+    commitBlockedBy: String?,
     cycleCoreReady: Bool,
     strictCycleReady: Bool,
     floorFallbackCycleReady: Bool,
@@ -734,11 +1630,33 @@ final class PushupRepDetector {
     countGateBlocked: Bool,
     countGateBlockReason: String?
   ) -> PushupRepDebug {
-    PushupRepDebug(
+    let repStateTransition = currentRepStateTransitionEvent
+    let topRecoveryGateForRearm = topRecoveryGate
+    let framesUntilRearm = repRearmPending ? max(0, config.rep.repRearmConfirmFrames - topRecoveryFrames) : 0
+    let bottomHoldActive = bottomConfirmedLatched &&
+      (
+        bottomReached ||
+          trackingLossGraceFramesRemaining > 0 ||
+          bottomLatchFramesRemaining > 0 ||
+          bottomReacquireHoldFramesRemaining > 0 ||
+          currentBottomReacquireState == "hold_active"
+      )
+    return PushupRepDebug(
+      frameIndex: currentFrameIndex,
+      timestampSeconds: currentTimestampSeconds,
+      currentRepState: state.rawValue,
+      repStateMachineState: currentRepStateMachineState,
+      repStateTransitionEvent: repStateTransition,
       smoothedElbowAngle: Double(smoothedElbowAngle),
       repMinElbowAngle: Double(repMinElbowAngle),
+      rawTorsoY: Double(currentRawTorsoY),
+      rawShoulderY: Double(currentRawShoulderY),
       smoothedTorsoY: Double(smoothedTorsoY),
       smoothedShoulderY: Double(smoothedShoulderY),
+      rawTorsoVelocity: Double(currentRawTorsoVelocity),
+      rawShoulderVelocity: Double(currentRawShoulderVelocity),
+      smoothedTorsoVelocity: Double(torsoVelocity),
+      smoothedShoulderVelocity: Double(shoulderVelocity),
       topReferenceTorsoY: Double(topReferenceTorsoY),
       topReferenceShoulderY: Double(topReferenceShoulderY),
       shoulderVelocity: Double(shoulderVelocity),
@@ -750,13 +1668,26 @@ final class PushupRepDetector {
       torsoDownTravel: Double(torsoDownTravel),
       torsoRecoveryToTop: Double(torsoRecoveryToTop),
       descendingFrames: descendingFrames,
+      bottomCandidateFrames: bottomFrames,
+      bottomConfirmedFrames: bottomReached ? bottomFrames : 0,
       bottomFrames: bottomFrames,
       ascendingFrames: ascendingFrames,
+      ascentFrames: ascendingFrames,
       bottomReached: bottomReached,
+      bottomConfirmedLatched: bottomConfirmedLatched,
+      bottomNearMiss: currentBottomNearMiss,
+      minDescendingFramesRequired: config.rep.descentConfirmFrames,
+      minBottomFramesRequired: config.rep.bottomConfirmFrames,
+      minAscendingFramesRequired: config.rep.ascendingConfirmFrames,
+      minTopRecoveryFramesRequired: config.rep.repRearmConfirmFrames,
       dominantEvidence: dominantEvidence,
       measuredEvidence: measuredEvidence,
       structuralEvidence: structuralEvidence,
       upperBodyEvidence: upperBodyEvidence,
+      weakestLandmark: currentWeakestLandmark,
+      weakestLandmarkConfidence: currentWeakestLandmarkConfidence,
+      missingLandmarks: currentMissingLandmarks,
+      landmarkQuality: currentLandmarkQuality,
       blockedReasons: blockedReasons,
       canProgress: canProgress,
       logicBlockedFrames: logicBlockedFrames,
@@ -766,18 +1697,261 @@ final class PushupRepDetector {
       startBlockedReason: startBlockedReason,
       repRearmPending: repRearmPending,
       topRecoveryFrames: topRecoveryFrames,
+      commitPathActive: commitPathActive,
+      commitCancelledReason: currentCommitCancelledReason,
+      idleResetReason: idleResetReason,
+      pendingCommitReason: pendingCommitReason,
+      commitBlockedBy: commitBlockedBy,
+      topReady: currentTopReady,
+      descendingStarted: currentDescendingStarted,
+      bottomLatched: currentBottomLatched,
+      ascendingStarted: currentAscendingStarted,
+      topRecovered: currentTopRecovered,
+      repCommitted: currentRepCommitted,
+      rearmReady: currentRearmReady,
+      resetReason: currentResetReason,
+      timeoutOrAbortReason: currentTimeoutOrAbortReason,
+      firstBlockingConditionAfterBottom: currentFirstBlockingConditionAfterBottom,
+      lostTrackingAtBottom: lostTrackingAtBottom,
+      trackingLossDuringCommitPath: trackingLossDuringCommitPath,
+      trackingLossGraceFramesRemaining: trackingLossGraceFramesRemaining,
+      bottomHoldActive: bottomHoldActive,
+      bottomReacquireState: currentBottomReacquireState,
+      bottomSupportAnchors: currentBottomSupportAnchors,
+      bottomBlockedReason: currentBottomBlockedReason,
+      didEnterAscending: didEnterAscending,
+      didEnterTopRecovery: didEnterTopRecovery,
+      rearmBlockedReason: currentRearmBlockedReason,
+      framesUntilRearm: framesUntilRearm,
+      rearmConfirmProgress: currentRearmConfirmProgress,
+      rearmMissingCondition: currentRearmMissingCondition,
+      whyRepDidNotCount: whyRepDidNotCount,
+      firstFinalBlocker: firstFinalBlocker,
+      lastFailedGate: lastFailedGate,
+      lastSuccessfulGate: lastSuccessfulGate,
+      bodyFound: currentBodyFound,
+      trackingQualityPass: currentTrackingQualityPass,
+      logicQualityPass: currentLogicQualityPass,
+      bottomGate: currentBottomGate,
+      ascentGate: currentAscentGate,
+      rearmGate: currentRearmGate,
       cycleCoreReady: cycleCoreReady,
       strictCycleReady: strictCycleReady,
       floorFallbackCycleReady: floorFallbackCycleReady,
       motionTravelGate: motionTravelGate,
-      topRecoveryGate: topRecoveryGate,
+      topRecoveryGate: topRecoveryGateForRearm,
+      countCommitReady: currentCountCommitReady,
       torsoSupportReady: torsoSupportReady,
       shoulderSupportReady: shoulderSupportReady,
       countGatePassed: countGatePassed,
       countGateBlocked: countGateBlocked,
       countGateBlockReason: countGateBlockReason,
-      stateTransitionEvent: consumeStateTransitionEvent(currentState: state)
+      stateTransitionEvent: consumeStateTransitionEvent(currentState: state),
+      repsAttemptedEstimate: repsAttemptedEstimate,
+      repsCommitted: repCount,
+      repsBlockedByBottom: repsBlockedByBottom,
+      repsBlockedByTopRecovery: repsBlockedByTopRecovery,
+      repsBlockedByRearm: repsBlockedByRearm,
+      repsBlockedByTrackingLoss: repsBlockedByTrackingLoss,
+      repsBlockedByTravel: repsBlockedByTravel,
+      repsBlockedByQuality: repsBlockedByQuality,
+      bottomConfirmedCount: bottomConfirmedCount,
+      ascendingEnteredCount: ascendingEnteredCount,
+      topRecoveryEnteredCount: topRecoveryEnteredCount,
+      repCommitAttemptCount: repCommitAttemptCount,
+      repCommitSuccessCount: repCommitSuccessCount,
+      repCommitBlockedCount: repCommitBlockedCount
     )
+  }
+
+  private func resolveRepStateMachineState(repCounted: Bool) -> String {
+    if repCounted {
+      return "rep_committed"
+    }
+    if repRearmPending {
+      return "rearm_pending"
+    }
+    if commitPathActive && (bottomReached || bottomConfirmedLatched) && ascendingFrames >= config.rep.ascendingConfirmFrames && commitTopRecoveryFrames > 0 {
+      return "top_recovery"
+    }
+    if topRecoveryFrames > 0 {
+      return "top_recovery"
+    }
+    if state == .ascending || ((bottomReached || bottomConfirmedLatched) && ascendingFrames > 0) {
+      return "ascending"
+    }
+    if bottomReached || bottomConfirmedLatched {
+      return "bottom_confirmed"
+    }
+    if bottomFrames > 0 {
+      return "bottom_candidate"
+    }
+    if state == .descending || descendingFrames > 0 {
+      return "descending"
+    }
+    return "idle"
+  }
+
+  private func consumeRepStateMachineTransitionEvent(
+    currentState: String,
+    frameIndex: Int,
+    timestamp: TimeInterval
+  ) -> String? {
+    let previousState = previousRepStateMachineStateForDebugEvent
+    previousRepStateMachineStateForDebugEvent = currentState
+    guard previousState != currentState else { return nil }
+    return "\(previousState)->\(currentState)@f\(frameIndex)@t\(String(format: "%.3f", timestamp))"
+  }
+
+  private func commitBlocker(gateReason: String) -> String {
+    if gateReason == "rearm_pending" { return "rearmGate" }
+    if gateReason.contains("tracking") { return "trackingGate" }
+    if gateReason.contains("quality") || gateReason.contains("evidence") || gateReason.contains("safety") { return "qualityGate" }
+    if gateReason.contains("timeout") || gateReason.contains("collapsed") || gateReason.contains("invalid") { return "abortGate" }
+    return "phaseGate"
+  }
+
+  private func makeV1CommitBlockReason(
+    topReady: Bool,
+    descendingStarted: Bool,
+    bottomLatched: Bool,
+    ascendingStarted: Bool,
+    topRecovered: Bool,
+    rearmReady: Bool,
+    commitSafetyGate: Bool
+  ) -> String {
+    if !rearmReady { return "rearm_pending" }
+    if !topReady { return "top_not_ready" }
+    if !descendingStarted { return "descending_not_started" }
+    if !bottomLatched { return "bottom_not_latched" }
+    if !ascendingStarted { return "ascending_not_started" }
+    if !topRecovered { return "top_not_recovered" }
+    if !commitSafetyGate { return "commit_safety_low" }
+    return "gate_not_applicable"
+  }
+
+  private func abortCurrentCycle(reason: String) {
+    currentIdleResetReason = reason
+    currentResetReason = reason
+    currentTimeoutOrAbortReason = reason
+    commitCancelledReason = reason
+    currentCommitCancelledReason = reason
+    currentCommitBlockedBy = "abortGate"
+    currentPendingCommitReason = nil
+    lastFailedGate = reason
+    if attemptActive {
+      let finalReason = firstFinalBlocker ?? reason
+      whyRepDidNotCount = finalReason
+      recordAttemptBlocked(reason: finalReason)
+      repCommitBlockedCount += 1
+      attemptActive = false
+      firstFinalBlocker = nil
+    } else {
+      whyRepDidNotCount = reason
+    }
+    firstBlockingConditionAfterBottom = nil
+    currentFirstBlockingConditionAfterBottom = nil
+    state = .bodyFound
+    descendingFrames = 0
+    bottomFrames = 0
+    ascendingFrames = 0
+    bottomReached = false
+    bottomConfirmedLatched = false
+    bottomLatchFramesRemaining = 0
+    bottomOcclusionFrames = 0
+    ascendingSignalGapFrames = 0
+    commitPathActive = false
+    commitPathGraceFramesRemaining = 0
+    trackingLossGraceFramesRemaining = 0
+    bottomReacquireHoldFramesRemaining = 0
+    commitTopRecoveryFrames = 0
+    currentBottomReacquireState = "inactive"
+    didEnterAscending = false
+    didEnterTopRecovery = false
+    topReadyLatched = false
+    cycleFramesSinceDescendingStart = 0
+    cycleFramesSinceBottomLatch = 0
+  }
+
+  private func recordAttemptBlocked(reason: String) {
+    if reason.contains("top_recovery") || reason.contains("recovery_insufficient") {
+      repsBlockedByTopRecovery += 1
+      return
+    }
+    if reason.contains("rearm") {
+      repsBlockedByRearm += 1
+      return
+    }
+    if reason.contains("travel") || reason.contains("_down_insufficient") {
+      repsBlockedByTravel += 1
+      return
+    }
+    if reason.contains("tracking") || reason == "body_not_found" {
+      repsBlockedByTrackingLoss += 1
+      return
+    }
+    if reason.contains("quality") || reason.contains("evidence") || reason.contains("unstable") || reason.contains("asymmetry") {
+      repsBlockedByQuality += 1
+      return
+    }
+    repsBlockedByBottom += 1
+  }
+
+  private func buildLandmarkDiagnostics(
+    joints: [PushlyJointName: TrackedJoint]
+  ) -> (landmarkQuality: [String: [String: Any]], weakestLandmark: String?, weakestConfidence: Double, missingLandmarks: [String]) {
+    let points: [(String, TrackedJoint?)] = [
+      ("leftShoulder", joints[.leftShoulder]),
+      ("rightShoulder", joints[.rightShoulder]),
+      ("leftElbow", joints[.leftElbow]),
+      ("rightElbow", joints[.rightElbow]),
+      ("leftWrist", joints[.leftWrist]),
+      ("rightWrist", joints[.rightWrist])
+    ]
+
+    var output: [String: [String: Any]] = [:]
+    var weakestName: String?
+    var weakestScore = Double.greatestFiniteMagnitude
+    var missingLandmarks: [String] = []
+
+    for (name, joint) in points {
+      let confidence = Double(joint?.renderConfidence ?? 0)
+      let presence = Double(joint?.presence ?? 0)
+      let usable = joint?.isLogicUsable ?? false
+      output[name] = [
+        "confidence": confidence,
+        "presence": presence,
+        "usable": usable
+      ]
+      if confidence < weakestScore {
+        weakestScore = confidence
+        weakestName = name
+      }
+      if joint == nil || !usable {
+        missingLandmarks.append(name)
+      }
+    }
+
+    let leftHip = joints[.leftHip]
+    let rightHip = joints[.rightHip]
+    let torsoConfidence = Double(((leftHip?.renderConfidence ?? 0) + (rightHip?.renderConfidence ?? 0)) / 2)
+    let torsoPresence = Double(((leftHip?.presence ?? 0) + (rightHip?.presence ?? 0)) / 2)
+    let torsoUsable = (leftHip?.isLogicUsable ?? false) || (rightHip?.isLogicUsable ?? false)
+    output["torsoAnchor"] = [
+      "confidence": torsoConfidence,
+      "presence": torsoPresence,
+      "usable": torsoUsable
+    ]
+    if torsoConfidence < weakestScore {
+      weakestScore = torsoConfidence
+      weakestName = "torsoAnchor"
+    }
+    if !torsoUsable {
+      missingLandmarks.append("torsoAnchor")
+    }
+
+    let resolvedWeakestScore = weakestScore.isFinite ? weakestScore : 0
+    return (output, weakestName, resolvedWeakestScore, missingLandmarks)
   }
 
   private func consumeStateTransitionEvent(currentState: PushupState) -> String? {
@@ -791,46 +1965,6 @@ final class PushupRepDetector {
     default:
       return nil
     }
-  }
-
-  // Keep this ordering aligned with operational debugging:
-  // first phase-state blockers, then cycle/travel/top-recovery, then quality/evidence.
-  private func makeCountGateBlockReason(
-    repRearmPending: Bool,
-    bottomReached: Bool,
-    ascendingFrames: Int,
-    torsoDownTravel: CGFloat,
-    torsoRecoveryToTop: CGFloat,
-    shoulderDownTravel: CGFloat,
-    shoulderRecoveryToTop: CGFloat,
-    logicQuality: Double,
-    trackingQuality: Double,
-    dominantEvidence: Double,
-    measuredEvidence: Double,
-    evidenceGate: Double,
-    trackingQualityGate: Double,
-    cycleCoreReady: Bool,
-    strictCycleReady: Bool,
-    floorFallbackCycleReady: Bool,
-    motionTravelGate: Bool,
-    topRecoveryGate: Bool
-  ) -> String {
-    if repRearmPending { return "rearm_pending" }
-    if !bottomReached { return "bottom_not_reached" }
-    if ascendingFrames < config.rep.ascendingConfirmFrames { return "ascending_not_confirmed" }
-    if !cycleCoreReady { return "cycle_core_incomplete" }
-    if strictCycleReady || floorFallbackCycleReady { return "gate_not_applicable" }
-    if !motionTravelGate { return "travel_cycle_incomplete" }
-    if !topRecoveryGate { return "top_recovery_incomplete" }
-    if torsoDownTravel < config.rep.minTorsoCycleTravel { return "torso_down_insufficient" }
-    if shoulderDownTravel < config.rep.minShoulderCycleTravel { return "shoulder_down_insufficient" }
-    if torsoRecoveryToTop < config.rep.minTorsoRecoveryTravel { return "torso_recovery_insufficient" }
-    if shoulderRecoveryToTop < config.rep.minShoulderRecoveryTravel { return "shoulder_recovery_insufficient" }
-    if logicQuality < config.rep.minLogicQualityToCount { return "logic_quality_low" }
-    if trackingQuality < trackingQualityGate { return "tracking_quality_low" }
-    if dominantEvidence < evidenceGate { return "dominant_evidence_low" }
-    if measuredEvidence < evidenceGate * 0.85 { return "measured_evidence_low" }
-    return "gate_not_applicable"
   }
 
   private func isStartupReady() -> Bool {
@@ -1110,6 +2244,58 @@ final class PushupRepDetector {
       : shoulderPairVisible
 
     return shoulderPairVisible && armVisible && shoulderHipAligned
+  }
+
+  private func hasPlausibleFloorBodyAnchors(joints: [PushlyJointName: TrackedJoint]) -> Bool {
+    let leftShoulder = joints[.leftShoulder]?.isRenderable == true
+    let rightShoulder = joints[.rightShoulder]?.isRenderable == true
+    let hasShoulder = leftShoulder || rightShoulder
+    guard hasShoulder else { return false }
+
+    let hasHip = joints[.leftHip]?.isRenderable == true || joints[.rightHip]?.isRenderable == true
+    let leftArmSegment =
+      (joints[.leftShoulder]?.isRenderable == true && joints[.leftElbow]?.isRenderable == true) ||
+      (joints[.leftElbow]?.isRenderable == true && joints[.leftWrist]?.isRenderable == true)
+    let rightArmSegment =
+      (joints[.rightShoulder]?.isRenderable == true && joints[.rightElbow]?.isRenderable == true) ||
+      (joints[.rightElbow]?.isRenderable == true && joints[.rightWrist]?.isRenderable == true)
+    let hasArmSegment = leftArmSegment || rightArmSegment
+
+    return hasArmSegment || hasHip
+  }
+
+  private func bottomSupportAnchors(joints: [PushlyJointName: TrackedJoint]) -> (hasAny: Bool, names: [String]) {
+    var names: [String] = []
+    let leftShoulder = joints[.leftShoulder]?.isRenderable == true
+    let rightShoulder = joints[.rightShoulder]?.isRenderable == true
+    let hasShoulder = leftShoulder || rightShoulder
+    if leftShoulder && rightShoulder {
+      names.append("shoulderPair")
+    } else if hasShoulder {
+      names.append("singleShoulder")
+    }
+
+    let leftHip = joints[.leftHip]?.isRenderable == true
+    let rightHip = joints[.rightHip]?.isRenderable == true
+    let hasHip = leftHip || rightHip
+    if leftHip && rightHip {
+      names.append("hipPair")
+    } else if hasHip {
+      names.append("singleHip")
+    }
+
+    let leftArmSegment =
+      (leftShoulder && joints[.leftElbow]?.isRenderable == true) ||
+      (joints[.leftElbow]?.isRenderable == true && joints[.leftWrist]?.isRenderable == true)
+    let rightArmSegment =
+      (rightShoulder && joints[.rightElbow]?.isRenderable == true) ||
+      (joints[.rightElbow]?.isRenderable == true && joints[.rightWrist]?.isRenderable == true)
+    if leftArmSegment || rightArmSegment {
+      names.append("armSegment")
+    }
+
+    let hasAny = hasShoulder && (hasHip || leftArmSegment || rightArmSegment)
+    return (hasAny, names)
   }
 
   private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {

@@ -11,6 +11,9 @@ import type {
 } from './PushlyNative.types';
 
 class PushlyNativeModule extends NativeModule<PushlyNativeModuleEvents> {
+  private sharedCreditsSnapshot: string | null = null;
+  private pendingShieldRedeemIntent: string | null = null;
+
   async getScreenTimeAuthorizationStatusAsync(): Promise<ScreenTimeAuthorizationStatus> {
     return 'unsupported';
   }
@@ -63,6 +66,28 @@ class PushlyNativeModule extends NativeModule<PushlyNativeModuleEvents> {
 
   async exportPoseDebugSessionAsync(): Promise<PoseDebugExportResult> {
     return { path: '' };
+  }
+
+  async getSharedCreditsSnapshotAsync(): Promise<string | null> {
+    return this.sharedCreditsSnapshot;
+  }
+
+  async setSharedCreditsSnapshotAsync(snapshot: string): Promise<void> {
+    this.sharedCreditsSnapshot = snapshot;
+  }
+
+  async getPendingShieldRedeemIntentAsync(): Promise<string | null> {
+    return this.pendingShieldRedeemIntent;
+  }
+
+  async setPendingShieldRedeemIntentAsync(intent: string): Promise<void> {
+    this.pendingShieldRedeemIntent = intent;
+  }
+
+  async consumePendingShieldRedeemIntentAsync(): Promise<string | null> {
+    const current = this.pendingShieldRedeemIntent;
+    this.pendingShieldRedeemIntent = null;
+    return current;
   }
 }
 

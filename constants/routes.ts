@@ -3,6 +3,7 @@ export const routes = {
   home: '/(tabs)',
   workout: '/workout',
   session: '/session',
+  redeem: '/redeem',
   progress: '/progress',
   settings: '/settings',
   paywall: '/paywall',

@@ -310,10 +310,21 @@ struct RepDetectionOutput {
 }
 
 struct PushupRepDebug {
+  let frameIndex: Int
+  let timestampSeconds: Double
+  let currentRepState: String
+  let repStateMachineState: String
+  let repStateTransitionEvent: String?
   let smoothedElbowAngle: Double
   let repMinElbowAngle: Double
+  let rawTorsoY: Double
+  let rawShoulderY: Double
   let smoothedTorsoY: Double
   let smoothedShoulderY: Double
+  let rawTorsoVelocity: Double
+  let rawShoulderVelocity: Double
+  let smoothedTorsoVelocity: Double
+  let smoothedShoulderVelocity: Double
   let topReferenceTorsoY: Double
   let topReferenceShoulderY: Double
   let shoulderVelocity: Double
@@ -325,13 +336,26 @@ struct PushupRepDebug {
   let torsoDownTravel: Double
   let torsoRecoveryToTop: Double
   let descendingFrames: Int
+  let bottomCandidateFrames: Int
+  let bottomConfirmedFrames: Int
   let bottomFrames: Int
   let ascendingFrames: Int
+  let ascentFrames: Int
   let bottomReached: Bool
+  let bottomConfirmedLatched: Bool
+  let bottomNearMiss: Bool
+  let minDescendingFramesRequired: Int
+  let minBottomFramesRequired: Int
+  let minAscendingFramesRequired: Int
+  let minTopRecoveryFramesRequired: Int
   let dominantEvidence: Double
   let measuredEvidence: Double
   let structuralEvidence: Double
   let upperBodyEvidence: Double
+  let weakestLandmark: String?
+  let weakestLandmarkConfidence: Double
+  let missingLandmarks: [String]
+  let landmarkQuality: [String: [String: Any]]
   let blockedReasons: [String]
   let canProgress: Bool
   let logicBlockedFrames: Int
@@ -341,24 +365,92 @@ struct PushupRepDebug {
   let startBlockedReason: String?
   let repRearmPending: Bool
   let topRecoveryFrames: Int
+  let commitPathActive: Bool
+  let commitCancelledReason: String?
+  let idleResetReason: String?
+  let pendingCommitReason: String?
+  let commitBlockedBy: String?
+  let topReady: Bool
+  let descendingStarted: Bool
+  let bottomLatched: Bool
+  let ascendingStarted: Bool
+  let topRecovered: Bool
+  let repCommitted: Bool
+  let rearmReady: Bool
+  let resetReason: String?
+  let timeoutOrAbortReason: String?
+  let firstBlockingConditionAfterBottom: String?
+  // Core stabilization/debug group for post-bottom recovery.
+  // bodyFound + (tracking/logic) indicate logic visibility readiness.
+  // rearm* describes readiness to start next rep after a counted rep.
+  // bottom* and trackingLoss* explain tolerated bottom occlusion windows.
+  let lostTrackingAtBottom: Bool
+  let trackingLossDuringCommitPath: Int
+  let trackingLossGraceFramesRemaining: Int
+  let bottomHoldActive: Bool
+  let bottomReacquireState: String?
+  let bottomSupportAnchors: [String]
+  let bottomBlockedReason: String?
+  let didEnterAscending: Bool
+  let didEnterTopRecovery: Bool
+  let rearmBlockedReason: String?
+  let framesUntilRearm: Int
+  let rearmConfirmProgress: Double
+  let rearmMissingCondition: String?
+  let whyRepDidNotCount: String?
+  let firstFinalBlocker: String?
+  let lastFailedGate: String?
+  let lastSuccessfulGate: String?
+  let bodyFound: Bool
+  let trackingQualityPass: Bool
+  let logicQualityPass: Bool
+  let bottomGate: Bool
+  let ascentGate: Bool
+  let rearmGate: Bool
   let cycleCoreReady: Bool
   let strictCycleReady: Bool
   let floorFallbackCycleReady: Bool
   let motionTravelGate: Bool
   let topRecoveryGate: Bool
+  let countCommitReady: Bool
   let torsoSupportReady: Bool
   let shoulderSupportReady: Bool
   let countGatePassed: Bool
   let countGateBlocked: Bool
   let countGateBlockReason: String?
   let stateTransitionEvent: String?
+  let repsAttemptedEstimate: Int
+  let repsCommitted: Int
+  let repsBlockedByBottom: Int
+  let repsBlockedByTopRecovery: Int
+  let repsBlockedByRearm: Int
+  let repsBlockedByTrackingLoss: Int
+  let repsBlockedByTravel: Int
+  let repsBlockedByQuality: Int
+  let bottomConfirmedCount: Int
+  let ascendingEnteredCount: Int
+  let topRecoveryEnteredCount: Int
+  let repCommitAttemptCount: Int
+  let repCommitSuccessCount: Int
+  let repCommitBlockedCount: Int
 
   func toDictionary() -> [String: Any] {
     [
+      "frameIndex": frameIndex,
+      "timestampSeconds": timestampSeconds,
+      "currentRepState": currentRepState,
+      "repStateMachineState": repStateMachineState,
+      "repStateTransitionEvent": repStateTransitionEvent as Any,
       "smoothedElbowAngle": smoothedElbowAngle,
       "repMinElbowAngle": repMinElbowAngle,
+      "rawTorsoY": rawTorsoY,
+      "rawShoulderY": rawShoulderY,
       "smoothedTorsoY": smoothedTorsoY,
       "smoothedShoulderY": smoothedShoulderY,
+      "rawTorsoVelocity": rawTorsoVelocity,
+      "rawShoulderVelocity": rawShoulderVelocity,
+      "smoothedTorsoVelocity": smoothedTorsoVelocity,
+      "smoothedShoulderVelocity": smoothedShoulderVelocity,
       "topReferenceTorsoY": topReferenceTorsoY,
       "topReferenceShoulderY": topReferenceShoulderY,
       "shoulderVelocity": shoulderVelocity,
@@ -370,13 +462,26 @@ struct PushupRepDebug {
       "torsoDownTravel": torsoDownTravel,
       "torsoRecoveryToTop": torsoRecoveryToTop,
       "descendingFrames": descendingFrames,
+      "bottomCandidateFrames": bottomCandidateFrames,
+      "bottomConfirmedFrames": bottomConfirmedFrames,
       "bottomFrames": bottomFrames,
       "ascendingFrames": ascendingFrames,
+      "ascentFrames": ascentFrames,
       "bottomReached": bottomReached,
+      "bottomConfirmedLatched": bottomConfirmedLatched,
+      "bottomNearMiss": bottomNearMiss,
+      "minDescendingFramesRequired": minDescendingFramesRequired,
+      "minBottomFramesRequired": minBottomFramesRequired,
+      "minAscendingFramesRequired": minAscendingFramesRequired,
+      "minTopRecoveryFramesRequired": minTopRecoveryFramesRequired,
       "dominantEvidence": dominantEvidence,
       "measuredEvidence": measuredEvidence,
       "structuralEvidence": structuralEvidence,
       "upperBodyEvidence": upperBodyEvidence,
+      "weakestLandmark": weakestLandmark as Any,
+      "weakestLandmarkConfidence": weakestLandmarkConfidence,
+      "missingLandmarks": missingLandmarks,
+      "landmarkQuality": landmarkQuality,
       "blockedReasons": blockedReasons,
       "canProgress": canProgress,
       "logicBlockedFrames": logicBlockedFrames,
@@ -386,17 +491,70 @@ struct PushupRepDebug {
       "startBlockedReason": startBlockedReason as Any,
       "repRearmPending": repRearmPending,
       "topRecoveryFrames": topRecoveryFrames,
+      "commitPathActive": commitPathActive,
+      "commitCancelledReason": commitCancelledReason as Any,
+      "idleResetReason": idleResetReason as Any,
+      "pendingCommitReason": pendingCommitReason as Any,
+      "commitBlockedBy": commitBlockedBy as Any,
+      "topReady": topReady,
+      "descendingStarted": descendingStarted,
+      "bottomLatched": bottomLatched,
+      "ascendingStarted": ascendingStarted,
+      "topRecovered": topRecovered,
+      "repCommitted": repCommitted,
+      "rearmReady": rearmReady,
+      "resetReason": resetReason as Any,
+      "timeoutOrAbortReason": timeoutOrAbortReason as Any,
+      "firstBlockingConditionAfterBottom": firstBlockingConditionAfterBottom as Any,
+      "lostTrackingAtBottom": lostTrackingAtBottom,
+      "trackingLossDuringCommitPath": trackingLossDuringCommitPath,
+      "trackingLossGraceFramesRemaining": trackingLossGraceFramesRemaining,
+      "bottomHoldActive": bottomHoldActive,
+      "bottomReacquireState": bottomReacquireState as Any,
+      "bottomSupportAnchors": bottomSupportAnchors,
+      "bottomBlockedReason": bottomBlockedReason as Any,
+      "didEnterAscending": didEnterAscending,
+      "didEnterTopRecovery": didEnterTopRecovery,
+      "rearmBlockedReason": rearmBlockedReason as Any,
+      "framesUntilRearm": framesUntilRearm,
+      "rearmConfirmProgress": rearmConfirmProgress,
+      "rearmMissingCondition": rearmMissingCondition as Any,
+      "whyRepDidNotCount": whyRepDidNotCount as Any,
+      "firstFinalBlocker": firstFinalBlocker as Any,
+      "lastFailedGate": lastFailedGate as Any,
+      "lastSuccessfulGate": lastSuccessfulGate as Any,
+      "bodyFound": bodyFound,
+      "trackingQualityPass": trackingQualityPass,
+      "logicQualityPass": logicQualityPass,
+      "bottomGate": bottomGate,
+      "ascentGate": ascentGate,
+      "rearmGate": rearmGate,
       "cycleCoreReady": cycleCoreReady,
       "strictCycleReady": strictCycleReady,
       "floorFallbackCycleReady": floorFallbackCycleReady,
       "motionTravelGate": motionTravelGate,
       "topRecoveryGate": topRecoveryGate,
+      "countCommitReady": countCommitReady,
       "torsoSupportReady": torsoSupportReady,
       "shoulderSupportReady": shoulderSupportReady,
       "countGatePassed": countGatePassed,
       "countGateBlocked": countGateBlocked,
       "countGateBlockReason": countGateBlockReason as Any,
-      "stateTransitionEvent": stateTransitionEvent as Any
+      "stateTransitionEvent": stateTransitionEvent as Any,
+      "repsAttemptedEstimate": repsAttemptedEstimate,
+      "repsCommitted": repsCommitted,
+      "repsBlockedByBottom": repsBlockedByBottom,
+      "repsBlockedByTopRecovery": repsBlockedByTopRecovery,
+      "repsBlockedByRearm": repsBlockedByRearm,
+      "repsBlockedByTrackingLoss": repsBlockedByTrackingLoss,
+      "repsBlockedByTravel": repsBlockedByTravel,
+      "repsBlockedByQuality": repsBlockedByQuality,
+      "bottomConfirmedCount": bottomConfirmedCount,
+      "ascendingEnteredCount": ascendingEnteredCount,
+      "topRecoveryEnteredCount": topRecoveryEnteredCount,
+      "repCommitAttemptCount": repCommitAttemptCount,
+      "repCommitSuccessCount": repCommitSuccessCount,
+      "repCommitBlockedCount": repCommitBlockedCount
     ]
   }
 }

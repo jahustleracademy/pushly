@@ -359,6 +359,61 @@ final class TemporalJointTrackerTests: XCTestCase {
     XCTAssertFalse(occluded[.leftWrist]?.isLogicUsable ?? true)
   }
 
+  func testPushupAnchorConfidenceDipPrefersLowConfidenceMeasuredOverInferred() {
+    let config = PushlyPoseConfig()
+    let trackerBase = TemporalJointTracker(config: config)
+    let trackerPushup = TemporalJointTracker(config: config)
+    let now = CACurrentMediaTime()
+
+    let stable = trackedUpperBody(hipConfidence: 0.82)
+    _ = trackerBase.update(
+      measured: stable,
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now,
+      pushupFloorModeActive: false
+    )
+    _ = trackerPushup.update(
+      measured: stable,
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now,
+      pushupFloorModeActive: true
+    )
+
+    var dipped = trackedUpperBody(hipConfidence: 0.24)
+    dipped[.leftShoulder] = PoseJointMeasurement(
+      name: .leftShoulder,
+      point: CGPoint(x: 0.42, y: 0.72),
+      confidence: 0.125,
+      visibility: 0.16,
+      presence: 0.16,
+      sourceType: .measured,
+      inFrame: true,
+      backend: .visionFallback,
+      measuredAt: now + 0.033
+    )
+
+    let baseOut = trackerBase.update(
+      measured: dipped,
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now + 0.033,
+      pushupFloorModeActive: false
+    )
+    let pushupOut = trackerPushup.update(
+      measured: dipped,
+      lowLightDetected: false,
+      roiHint: nil,
+      frameTimestamp: now + 0.033,
+      pushupFloorModeActive: true
+    )
+
+    XCTAssertEqual(baseOut[.leftShoulder]?.sourceType, .inferred)
+    XCTAssertEqual(pushupOut[.leftShoulder]?.sourceType, .lowConfidenceMeasured)
+    XCTAssertTrue(pushupOut[.leftShoulder]?.isRenderable == true)
+  }
+
   private func trackedUpperBody(hipConfidence: Float) -> [PushlyJointName: PoseJointMeasurement] {
     var joints: [PushlyJointName: PoseJointMeasurement] = [
       .nose: PoseJointMeasurement(name: .nose, point: CGPoint(x: 0.5, y: 0.84), confidence: 0.9, visibility: 0.9, presence: 0.9, backend: .mediapipe),
@@ -527,6 +582,35 @@ final class TrackingQualityEvaluatorTests: XCTestCase {
     XCTAssertGreaterThan(low.logicQuality, veryLow.logicQuality)
     XCTAssertLessThan(base.logicQuality - low.logicQuality, 0.06)
     XCTAssertTrue(veryLow.reasonCodes.contains("very_low_light"))
+  }
+
+  func testFloorStateFallbackWorksWithoutNoseWhenShoulderArmHipAnchorsExist() {
+    let evaluator = TrackingQualityEvaluator(config: PushlyPoseConfig())
+    let now = CACurrentMediaTime()
+    let joints: [PushlyJointName: TrackedJoint] = [
+      .leftShoulder: trackedJoint(.leftShoulder, x: 0.41, y: 0.54, render: 0.84, logic: 0.82, source: .lowConfidenceMeasured, now: now),
+      .rightShoulder: trackedJoint(.rightShoulder, x: 0.59, y: 0.54, render: 0.84, logic: 0.82, source: .lowConfidenceMeasured, now: now),
+      .leftElbow: trackedJoint(.leftElbow, x: 0.33, y: 0.49, render: 0.74, logic: 0.66, source: .inferred, now: now),
+      .leftWrist: trackedJoint(.leftWrist, x: 0.27, y: 0.45, render: 0.68, logic: 0.22, source: .inferred, now: now),
+      .leftHip: trackedJoint(.leftHip, x: 0.45, y: 0.5, render: 0.52, logic: 0.26, source: .inferred, now: now),
+      .rightHip: trackedJoint(.rightHip, x: 0.55, y: 0.5, render: 0.5, logic: 0.24, source: .inferred, now: now)
+    ]
+
+    let quality = evaluator.evaluate(
+      joints: joints,
+      lowLightDetected: false,
+      trackingState: .tracking,
+      poseState: .trackingUpperBody,
+      poseMode: .upperBody,
+      pushupFloorModeActive: false,
+      modeConfidence: 0.62,
+      roiCoverage: 0.38,
+      coverageHint: PoseVisibilityCoverage(upperBodyCoverage: 0.72, fullBodyCoverage: 0.18, handCoverage: 0.44)
+    )
+
+    XCTAssertEqual(quality.pushupFloorModeActive, true)
+    XCTAssertGreaterThan(quality.logicQuality, 0.3)
+    XCTAssertNotEqual(quality.bodyVisibilityState, .notFound)
   }
 
   private func trackedJoint(
@@ -803,6 +887,137 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
     XCTAssertEqual(output?.repCount, 1)
   }
 
+  func testBottomReacquireHoldBridgesShortDropAfterTrackingLossGrace() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    let bottomDipQuality = degradedBottomDipQuality(upperBodyCoverage: 0.23)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let descendToBottom: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.30, false),
+      (0.58, 0.62, false),
+      (0.60, 0.94, false),
+      (0.60, 0.96, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in descendToBottom {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    XCTAssertEqual(output?.repDebug?.bottomReached, true)
+
+    let dipFrames = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 2) + 1
+    for _ in 0..<dipFrames {
+      output = detector.update(
+        joints: makeSparseFloorAnchorJoints(shoulderY: 0.60),
+        quality: bottomDipQuality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertNotEqual(output?.repDebug?.resetReason, "body_not_found")
+    XCTAssertEqual(output?.repDebug?.bottomReacquireState, "hold_active")
+    XCTAssertEqual(output?.repCount, 0)
+  }
+
+  func testLongBottomLossStillResetsAfterReacquireHoldExpires() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    let bottomDipQuality = degradedBottomDipQuality(upperBodyCoverage: 0.23)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let descendToBottom: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.30, false),
+      (0.58, 0.62, false),
+      (0.60, 0.94, false),
+      (0.60, 0.96, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in descendToBottom {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    XCTAssertEqual(output?.repDebug?.bottomReached, true)
+
+    let longDropFrames = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 2) + 8
+    for _ in 0..<longDropFrames {
+      output = detector.update(
+        joints: makeSparseFloorAnchorJoints(shoulderY: 0.60),
+        quality: bottomDipQuality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repDebug?.bodyFound, false)
+    XCTAssertEqual(output?.repDebug?.resetReason, "body_not_found")
+    XCTAssertEqual(output?.repDebug?.whyRepDidNotCount, "body_not_found")
+  }
+
+  func testBottomHoldAloneDoesNotCreateFakeCount() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    let bottomDipQuality = degradedBottomDipQuality(upperBodyCoverage: 0.23)
+    var output: RepDetectionOutput?
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let descendToBottom: [(CGFloat, CGFloat, Bool)] = [
+      (0.56, 0.30, false),
+      (0.58, 0.62, false),
+      (0.60, 0.94, false),
+      (0.60, 0.96, false)
+    ]
+    for (shoulderY, elbowBend, occluded) in descendToBottom {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let holdOnlyFrames = max(config.rep.bottomOcclusionGraceFrames, config.rep.ascendingConfirmFrames + 2) + 2
+    for _ in 0..<holdOnlyFrames {
+      output = detector.update(
+        joints: makeSparseFloorAnchorJoints(shoulderY: 0.60),
+        quality: bottomDipQuality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repCount, 0)
+    XCTAssertEqual(output?.repDebug?.repCommitted, false)
+    XCTAssertNotEqual(output?.state, .repCounted)
+  }
+
   func testHalfCycleDoesNotCountAndExposesCountGateReason() {
     let config = PushlyPoseConfig()
     let detector = PushupRepDetector(config: config)
@@ -837,12 +1052,11 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
     XCTAssertNotNil(output?.repDebug?.countGateBlockReason)
   }
 
-  func testRearmPreventsImmediateDoubleCountAndAllowsNextFullRepAfterTopReset() {
+  func testRearmAllowsContinuousCadenceButStillBlocksImmediateDoubleCount() {
     let config = PushlyPoseConfig()
     let detector = PushupRepDetector(config: config)
     let quality = stableFloorQuality(visibleJointCount: 11)
     var output: RepDetectionOutput?
-    var sawRearmPending = false
 
     func runFullCycle() {
       let cycle: [(CGFloat, CGFloat, Bool)] = [
@@ -861,9 +1075,6 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
           quality: quality,
           repTarget: 10
         )
-        if output?.repDebug?.countGateBlockReason == "rearm_pending" {
-          sawRearmPending = true
-        }
       }
     }
 
@@ -878,11 +1089,18 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
     runFullCycle()
     XCTAssertEqual(output?.repCount, 1)
 
-    runFullCycle()
+    // Replaying deep-bottom frames right away must not trigger a duplicate without a real new cycle.
+    for _ in 0..<3 {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.60, elbowBend: 0.96, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
     XCTAssertEqual(output?.repCount, 1)
-    XCTAssertTrue(sawRearmPending)
 
-    for _ in 0..<(config.rep.repRearmConfirmFrames + 1) {
+    // Only a very short top reset should be enough to start the next rep in continuous cadence.
+    for _ in 0..<2 {
       output = detector.update(
         joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
         quality: quality,
@@ -891,7 +1109,351 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
     }
 
     runFullCycle()
+    XCTAssertEqual(output?.repCount, 2, "Continuous reps should count after short top recovery.")
+  }
+
+  func testSlowCadenceAndFastCadenceBothCountWithoutDoubleCounting() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    func runCycle(frames: [(CGFloat, CGFloat, Bool)]) {
+      for (shoulderY, elbowBend, occluded) in frames {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    let slowCycle: [(CGFloat, CGFloat, Bool)] = [
+      (0.55, 0.14, false), (0.56, 0.26, false), (0.58, 0.48, false),
+      (0.60, 0.86, false), (0.60, 0.96, false), (0.60, 0.96, false),
+      (0.59, 0.78, false), (0.58, 0.62, false), (0.56, 0.36, false),
+      (0.54, 0.06, false), (0.54, 0.02, false), (0.54, 0.02, false)
+    ]
+    runCycle(frames: slowCycle)
+    XCTAssertEqual(output?.repCount, 1)
+
+    let topResetFrames = max(2, config.rep.repRearmConfirmFrames + 1)
+    for _ in 0..<topResetFrames {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    XCTAssertEqual(output?.repDebug?.rearmGate, true)
+
+    let fastCycle: [(CGFloat, CGFloat, Bool)] = [
+      (0.57, 0.38, false),
+      (0.60, 0.96, false),
+      (0.60, 0.96, false),
+      (0.56, 0.30, false),
+      (0.54, 0.02, false)
+    ]
+    runCycle(frames: fastCycle)
+
     XCTAssertEqual(output?.repCount, 2)
+  }
+
+  func testThreeValidRepsInSequenceRemainStable() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    func runFullCycle() {
+      let cycle: [(CGFloat, CGFloat, Bool)] = [
+        (0.56, 0.3, false),
+        (0.58, 0.62, false),
+        (0.60, 0.94, false),
+        (0.60, 0.96, false),
+        (0.58, 0.7, false),
+        (0.56, 0.38, false),
+        (0.54, 0.04, false),
+        (0.54, 0.02, false)
+      ]
+      for (shoulderY, elbowBend, occluded) in cycle {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    for expectedCount in 1...3 {
+      runFullCycle()
+      XCTAssertEqual(output?.repCount, expectedCount)
+      if expectedCount < 3 {
+        for _ in 0..<2 {
+          output = detector.update(
+            joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+            quality: quality,
+            repTarget: 10
+          )
+        }
+        XCTAssertEqual(output?.repDebug?.rearmGate, true)
+      }
+    }
+  }
+
+  func testShortBodyDropDuringRearmDoesNotImmediatelyResetCycle() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    func runFullCycle() {
+      let cycle: [(CGFloat, CGFloat, Bool)] = [
+        (0.56, 0.3, false),
+        (0.58, 0.62, false),
+        (0.60, 0.94, false),
+        (0.60, 0.96, false),
+        (0.58, 0.7, false),
+        (0.56, 0.38, false),
+        (0.54, 0.04, false),
+        (0.54, 0.02, false)
+      ]
+      for (shoulderY, elbowBend, occluded) in cycle {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    runFullCycle()
+    XCTAssertEqual(output?.repCount, 1)
+    XCTAssertEqual(output?.repDebug?.repRearmPending, true)
+
+    // Sparse but still plausible floor anchors: shoulder + arm segment + hip.
+    for _ in 0..<2 {
+      output = detector.update(
+        joints: makeSparseFloorAnchorJoints(shoulderY: 0.54),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.state, .bodyFound)
+    XCTAssertEqual(output?.repDebug?.bodyFound, true)
+    XCTAssertNotEqual(output?.repDebug?.whyRepDidNotCount, "body_not_found")
+    XCTAssertNotEqual(output?.repDebug?.resetReason, "body_not_found")
+  }
+
+  func testLongTrackingLossStillTriggersBodyNotFoundReset() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    func runFullCycle() {
+      let cycle: [(CGFloat, CGFloat, Bool)] = [
+        (0.56, 0.3, false),
+        (0.58, 0.62, false),
+        (0.60, 0.94, false),
+        (0.60, 0.96, false),
+        (0.58, 0.7, false),
+        (0.56, 0.38, false),
+        (0.54, 0.04, false),
+        (0.54, 0.02, false)
+      ]
+      for (shoulderY, elbowBend, occluded) in cycle {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    runFullCycle()
+    XCTAssertEqual(output?.repCount, 1)
+
+    for _ in 0..<5 {
+      output = detector.update(joints: [:], quality: quality, repTarget: 10)
+    }
+
+    XCTAssertEqual(output?.repDebug?.bodyFound, false)
+    XCTAssertEqual(output?.repDebug?.whyRepDidNotCount, "body_not_found")
+    XCTAssertEqual(output?.repDebug?.resetReason, "body_not_found")
+  }
+
+  func testShortQualityDipAfterRepOneDoesNotBreakRearm() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    let dipQuality = TrackingQuality(
+      trackingQuality: 0.2,
+      renderQuality: 0.56,
+      logicQuality: 0.16,
+      pushupFloorModeActive: true,
+      bodyVisibilityState: .partial,
+      trackingState: .tracking,
+      poseTrackingState: .trackingUpperBody,
+      poseMode: .upperBody,
+      reasonCodes: ["low_light"],
+      spreadScore: 0.55,
+      smoothedSpread: 0.55,
+      visibleJointCount: 7,
+      upperBodyRenderableCount: 5,
+      reliability: 0.52,
+      roiCoverage: 0.38,
+      fullBodyCoverage: 0.24,
+      upperBodyCoverage: 0.72,
+      handCoverage: 0.6,
+      wristRetention: 0.72,
+      inferredJointRatio: 0.34,
+      modeConfidence: 0.68
+    )
+    var output: RepDetectionOutput?
+
+    func runFullCycle() {
+      let cycle: [(CGFloat, CGFloat, Bool)] = [
+        (0.56, 0.3, false),
+        (0.58, 0.62, false),
+        (0.60, 0.94, false),
+        (0.60, 0.96, false),
+        (0.58, 0.7, false),
+        (0.56, 0.38, false),
+        (0.54, 0.04, false),
+        (0.54, 0.02, false)
+      ]
+      for (shoulderY, elbowBend, occluded) in cycle {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    runFullCycle()
+    XCTAssertEqual(output?.repCount, 1)
+    XCTAssertEqual(output?.repDebug?.repRearmPending, true)
+
+    for _ in 0..<2 {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: dipQuality,
+        repTarget: 10
+      )
+    }
+    for _ in 0..<3 {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repDebug?.rearmGate, true)
+    XCTAssertEqual(output?.repDebug?.repRearmPending, false)
+
+    runFullCycle()
+    XCTAssertEqual(output?.repCount, 2)
+  }
+
+  func testRearmStaysBlockedWithoutRealTopRecovery() {
+    let config = PushlyPoseConfig()
+    let detector = PushupRepDetector(config: config)
+    let quality = stableFloorQuality(visibleJointCount: 11)
+    var output: RepDetectionOutput?
+
+    func runFullCycle() {
+      let cycle: [(CGFloat, CGFloat, Bool)] = [
+        (0.56, 0.3, false),
+        (0.58, 0.62, false),
+        (0.60, 0.94, false),
+        (0.60, 0.96, false),
+        (0.58, 0.7, false),
+        (0.56, 0.38, false),
+        (0.54, 0.04, false),
+        (0.54, 0.02, false)
+      ]
+      for (shoulderY, elbowBend, occluded) in cycle {
+        output = detector.update(
+          joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: occluded, asymmetricArms: false),
+          quality: quality,
+          repTarget: 10
+        )
+      }
+    }
+
+    for _ in 0..<(config.rep.plankLockFrames + 1) {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: 0.54, elbowBend: 0.02, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+    runFullCycle()
+    XCTAssertEqual(output?.repCount, 1)
+    XCTAssertEqual(output?.repDebug?.repRearmPending, true)
+
+    let noTopResetFrames: [(CGFloat, CGFloat)] = [
+      (0.57, 0.4),
+      (0.59, 0.74),
+      (0.61, 0.96),
+      (0.61, 0.96),
+      (0.60, 0.92),
+      (0.60, 0.92),
+      (0.59, 0.86)
+    ]
+    for (shoulderY, elbowBend) in noTopResetFrames {
+      output = detector.update(
+        joints: makeFrontalJoints(shoulderY: shoulderY, elbowBend: elbowBend, occludeElbows: false, asymmetricArms: false),
+        quality: quality,
+        repTarget: 10
+      )
+    }
+
+    XCTAssertEqual(output?.repCount, 1)
+    XCTAssertEqual(output?.repDebug?.rearmGate, false)
+    XCTAssertEqual(output?.repDebug?.repRearmPending, true)
+    XCTAssertNotEqual(output?.repDebug?.rearmBlockedReason, "rearm_confirming")
   }
 
   private func stableFloorQuality(visibleJointCount: Int) -> TrackingQuality {
@@ -917,6 +1479,32 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
       wristRetention: 0.98,
       inferredJointRatio: 0.12,
       modeConfidence: 0.86
+    )
+  }
+
+  private func degradedBottomDipQuality(upperBodyCoverage: Double) -> TrackingQuality {
+    TrackingQuality(
+      trackingQuality: 0.28,
+      renderQuality: 0.19,
+      logicQuality: 0.18,
+      pushupFloorModeActive: true,
+      bodyVisibilityState: .partial,
+      trackingState: .tracking,
+      poseTrackingState: .trackingUpperBody,
+      poseMode: .upperBody,
+      reasonCodes: ["bottom_occlusion"],
+      spreadScore: 0.5,
+      smoothedSpread: 0.5,
+      visibleJointCount: 3,
+      upperBodyRenderableCount: 2,
+      reliability: 0.44,
+      roiCoverage: 0.32,
+      fullBodyCoverage: 0.18,
+      upperBodyCoverage: upperBodyCoverage,
+      handCoverage: 0.34,
+      wristRetention: 0.4,
+      inferredJointRatio: 0.42,
+      modeConfidence: 0.52
     )
   }
 
@@ -979,6 +1567,14 @@ final class PushupRepDetectorStabilityTests: XCTestCase {
       .rightHip: trackedJoint(.rightHip, x: 0.54, y: hipY, render: 0.9, logic: 0.88, source: .measured, now: CACurrentMediaTime()),
       .leftAnkle: trackedJoint(.leftAnkle, x: 0.49, y: ankleY, render: 0.86, logic: 0.84, source: .measured, now: CACurrentMediaTime()),
       .rightAnkle: trackedJoint(.rightAnkle, x: 0.51, y: ankleY, render: 0.86, logic: 0.84, source: .measured, now: CACurrentMediaTime())
+    ]
+  }
+
+  private func makeSparseFloorAnchorJoints(shoulderY: CGFloat) -> [PushlyJointName: TrackedJoint] {
+    [
+      .leftShoulder: trackedJoint(.leftShoulder, x: 0.42, y: shoulderY, render: 0.86, logic: 0.82, source: .measured, now: CACurrentMediaTime()),
+      .leftElbow: trackedJoint(.leftElbow, x: 0.36, y: shoulderY + 0.05, render: 0.82, logic: 0.78, source: .measured, now: CACurrentMediaTime()),
+      .leftHip: trackedJoint(.leftHip, x: 0.46, y: shoulderY + 0.10, render: 0.8, logic: 0.74, source: .measured, now: CACurrentMediaTime())
     ]
   }
 

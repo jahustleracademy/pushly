@@ -34,20 +34,33 @@ export type AttemptOptionId =
 
 export type PaywallPlanId = 'yearly' | 'monthly';
 export type AuthMethodId = 'apple' | 'email' | 'skip' | '';
+export type GoalId = 'sleep' | 'focus' | 'discipline' | 'energy' | '';
+export type AgeRangeId = 'under18' | '18to24' | '25to34' | '35plus' | '';
+export type ReminderSlotId = 'morning' | 'afternoon' | 'evening' | '';
+export type ExerciseTypeId = 'pushups' | 'squats' | 'mixed' | '';
 
 export type OnboardingStepId =
   | 'hero'
   | 'quizIntro'
   | 'name'
+  | 'goals'
   | 'distractingApps'
   | 'scrollMinutes'
+  | 'targetMinutes'
   | 'feelings'
+  | 'ageRange'
   | 'attempts'
   | 'diagnosis'
   | 'reframe'
+  | 'reframeGain'
   | 'mechanic'
+  | 'reminderTime'
+  | 'exerciseChoice'
+  | 'setupBridge'
+  | 'journey'
   | 'protectApps'
   | 'trust'
+  | 'trustRating'
   | 'paywall'
   | 'screenTimePermission'
   | 'cameraCalibration'
@@ -81,10 +94,15 @@ export type PaywallPlanOption = {
 
 export type OnboardingAnswers = {
   name: string;
+  goalId: GoalId;
   distractingApps: AppOptionId[];
   dailyScrollMinutes: number;
+  targetScrollMinutes: number;
   feelings: FeelingOptionId[];
+  ageRange: AgeRangeId;
   attempts: AttemptOptionId[];
+  reminderSlot: ReminderSlotId;
+  exerciseType: ExerciseTypeId;
   protectedApps: AppOptionId[];
   planId: PaywallPlanId;
   screenTimeStatus: ScreenTimeAuthorizationStatus;

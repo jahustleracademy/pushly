@@ -8,7 +8,8 @@
     "ios": "expo run:ios",
     "android": "echo 'Android is intentionally disabled in this iOS-first branch.' && exit 1",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@expo-google-fonts/outfit": "^0.4.3",
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@types/react": "~19.1.0",
     "babel-preset-expo": "~54.0.10",
-    "typescript": "~5.9.2"
+    "typescript": "~5.9.2",
+    "vitest": "^3.2.4"
   }
 }

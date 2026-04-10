@@ -34,5 +34,10 @@ export const PushlyNative = {
   startDeviceActivityMonitoring: () => PushlyNativeModule.startDeviceActivityMonitoringAsync(),
   stopDeviceActivityMonitoring: () => PushlyNativeModule.stopDeviceActivityMonitoringAsync(),
   getDeviceActivityMonitoringStatus: () => PushlyNativeModule.getDeviceActivityMonitoringStatusAsync(),
-  isPoseEngineAvailable: () => PushlyNativeModule.isPoseEngineAvailableAsync()
+  isPoseEngineAvailable: () => PushlyNativeModule.isPoseEngineAvailableAsync(),
+  getSharedCreditsSnapshot: () => PushlyNativeModule.getSharedCreditsSnapshotAsync(),
+  setSharedCreditsSnapshot: (snapshot: string) => PushlyNativeModule.setSharedCreditsSnapshotAsync(snapshot),
+  getPendingShieldRedeemIntent: () => PushlyNativeModule.getPendingShieldRedeemIntentAsync(),
+  setPendingShieldRedeemIntent: (intent: string) => PushlyNativeModule.setPendingShieldRedeemIntentAsync(intent),
+  consumePendingShieldRedeemIntent: () => PushlyNativeModule.consumePendingShieldRedeemIntentAsync()
 };

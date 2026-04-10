@@ -41,3 +41,12 @@ export async function getCustomerInfo() {
   }
   return Purchases.getCustomerInfo();
 }
+
+export async function restorePurchases(entitlement = 'pro') {
+  const ready = await initRevenueCat();
+  if (!ready) {
+    return false;
+  }
+  const info = await Purchases.restorePurchases();
+  return hasActiveSubscription(info, entitlement);
+}

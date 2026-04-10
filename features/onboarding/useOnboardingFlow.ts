@@ -12,21 +12,23 @@ import {
   saveOnboardingDraft
 } from './storage';
 import type {
+  AgeRangeId,
   AppOptionId,
   AuthMethodId,
   AttemptOptionId,
+  ExerciseTypeId,
   FeelingOptionId,
+  GoalId,
   OnboardingAnswers,
   PaywallPlanId
 } from './types';
 import type { PoseFrame, ProtectedSelectionSummary, ScreenTimeAuthorizationStatus, ShieldStatus } from '@/lib/native/pushly-native';
 
-const MAX_DISTRACTING_APPS = 3;
-const MAX_FEELINGS = 2;
 // Production default: keep JS fallback off and count natively.
 // Can be re-enabled temporarily as an explicit safety net during native counter investigations.
 const ENABLE_JS_PUSHUP_FALLBACK_IN_TRIAL = false;
 const ENABLE_TRIAL_DEBUG_LOGGING = __DEV__;
+const PUSHUP_TRIAL_LOG_MODE: 'compact' | 'verbose' = __DEV__ ? 'verbose' : 'compact';
 
 export function useOnboardingFlow() {
   const [answers, setAnswers] = useState<OnboardingAnswers>(DEFAULT_ONBOARDING_ANSWERS);
@@ -43,7 +45,7 @@ export function useOnboardingFlow() {
         return;
       }
 
-      setAnswers(withResetPushupTrialState(draft.answers));
+      setAnswers(withResetPushupTrialState(sanitizeOnboardingAnswers(draft.answers)));
       setStepIndex(Math.max(0, Math.min(draft.stepIndex, ONBOARDING_STEP_ORDER.length - 1)));
       setHydrated(true);
     });
@@ -75,29 +77,34 @@ export function useOnboardingFlow() {
     setAnswers((previous) => withResetPushupTrialState(previous));
   }, [currentStepId]);
 
-  useEffect(() => {
-    if (currentStepId !== 'protectApps') {
-      return;
-    }
-
-    if (answers.protectedApps.length > 0 || answers.distractingApps.length === 0) {
-      return;
-    }
-
-    setAnswers((previous) => ({
-      ...previous,
-      protectedApps: previous.distractingApps.slice(0, MAX_DISTRACTING_APPS)
-    }));
-  }, [answers.distractingApps, answers.protectedApps.length, currentStepId]);
-
   const canContinue = getCanContinue(currentStepId, answers);
 
   const updateName = (name: string) => {
     setAnswers((previous) => ({ ...previous, name }));
   };
 
+  const selectGoal = (goalId: GoalId) => {
+    setAnswers((previous) => ({ ...previous, goalId }));
+  };
+
   const updateScrollMinutes = (dailyScrollMinutes: number) => {
     setAnswers((previous) => ({ ...previous, dailyScrollMinutes }));
+  };
+
+  const updateTargetMinutes = (targetScrollMinutes: number) => {
+    setAnswers((previous) => ({ ...previous, targetScrollMinutes }));
+  };
+
+  const selectAgeRange = (ageRange: AgeRangeId) => {
+    setAnswers((previous) => ({ ...previous, ageRange }));
+  };
+
+  const selectReminderSlot = (reminderSlot: OnboardingAnswers['reminderSlot']) => {
+    setAnswers((previous) => ({ ...previous, reminderSlot }));
+  };
+
+  const selectExerciseType = (exerciseType: ExerciseTypeId) => {
+    setAnswers((previous) => ({ ...previous, exerciseType }));
   };
 
   const selectPlan = (planId: PaywallPlanId) => {
@@ -129,12 +136,25 @@ export function useOnboardingFlow() {
     const resolvedRepCount = shouldUseFallbackForTrial
       ? Math.max(nativeRepCount, fallbackRepCount)
       : nativeRepCount;
+    const debug = frame.pushupDebug;
+
+    if (ENABLE_TRIAL_DEBUG_LOGGING && currentStepId === 'pushUpTrial' && debug?.repStateTransitionEvent) {
+      console.log('[pushup-trial-transition]', {
+        event: debug.repStateTransitionEvent,
+        frameIndex: debug.frameIndex,
+        timestampSeconds: debug.timestampSeconds,
+        state: debug.repStateMachineState ?? debug.state
+      });
+    }
 
     if (ENABLE_TRIAL_DEBUG_LOGGING && currentStepId === 'pushUpTrial' && poseFrameCounter.current % 10 === 0) {
-      const debug = frame.pushupDebug;
-      console.log('[pushup-trial]', {
+      const compact = {
         state: debug?.state ?? frame.state,
+        repStateMachineState: debug?.repStateMachineState,
+        repStateTransitionEvent: debug?.repStateTransitionEvent,
         repCount: debug?.repCount ?? resolvedRepCount,
+        frameIndex: debug?.frameIndex,
+        timestampSeconds: debug?.timestampSeconds,
         requestedBackend: debug?.requestedBackend ?? frame.requestedBackend ?? frame.poseBackend,
         activeBackend: debug?.activeBackend ?? frame.activeBackend ?? frame.poseBackend,
         compiledWithMediaPipe: debug?.compiledWithMediaPipe ?? frame.compiledWithMediaPipe,
@@ -142,6 +162,29 @@ export function useOnboardingFlow() {
         mediapipeInitReason: debug?.mediapipeInitReason ?? frame.mediapipeInitReason,
         fallbackReason: debug?.fallbackReason ?? frame.fallbackReason,
         repBlockedReasons: debug?.repBlockedReasons ?? frame.diagnostics?.repBlockedReasons ?? frame.repDebug?.blockedReasons ?? [],
+        whyRepDidNotCount: debug?.whyRepDidNotCount,
+        firstFinalBlocker: debug?.firstFinalBlocker,
+        lastFailedGate: debug?.lastFailedGate,
+        lastSuccessfulGate: debug?.lastSuccessfulGate,
+        bodyFound: debug?.bodyFound,
+        trackingQualityPass: debug?.trackingQualityPass,
+        logicQualityPass: debug?.logicQualityPass,
+        bottomGate: debug?.bottomGate,
+        ascentGate: debug?.ascentGate,
+        topRecoveryGate: debug?.topRecoveryGate,
+        rearmGate: debug?.rearmGate,
+        strictCycleReady: debug?.strictCycleReady,
+        cycleCoreReady: debug?.cycleCoreReady,
+        topReady: debug?.topReady,
+        descendingStarted: debug?.descendingStarted,
+        bottomLatched: debug?.bottomLatched,
+        ascendingStarted: debug?.ascendingStarted,
+        topRecovered: debug?.topRecovered,
+        repCommitted: debug?.repCommitted,
+        rearmReady: debug?.rearmReady,
+        resetReason: debug?.resetReason,
+        timeoutOrAbortReason: debug?.timeoutOrAbortReason,
+        countCommitReady: debug?.countCommitReady,
         countGatePassed: debug?.countGatePassed,
         countGateBlocked: debug?.countGateBlocked,
         countGateBlockReason: debug?.countGateBlockReason,
@@ -151,7 +194,42 @@ export function useOnboardingFlow() {
         torsoRecoveryToTop: debug?.torsoRecoveryToTop,
         shoulderDownTravel: debug?.shoulderDownTravel,
         shoulderRecoveryToTop: debug?.shoulderRecoveryToTop
-      });
+      };
+      if (PUSHUP_TRIAL_LOG_MODE === 'verbose') {
+        console.log('[pushup-trial]', {
+          ...compact,
+          rawTorsoY: debug?.rawTorsoY,
+          rawShoulderY: debug?.rawShoulderY,
+          smoothedTorsoY: debug?.smoothedTorsoY,
+          smoothedShoulderY: debug?.smoothedShoulderY,
+          rawTorsoVelocity: debug?.rawTorsoVelocity,
+          rawShoulderVelocity: debug?.rawShoulderVelocity,
+          smoothedTorsoVelocity: debug?.smoothedTorsoVelocity,
+          smoothedShoulderVelocity: debug?.smoothedShoulderVelocity,
+          bottomCandidateFrames: debug?.bottomCandidateFrames,
+          bottomConfirmedFrames: debug?.bottomConfirmedFrames,
+          bottomNearMiss: debug?.bottomNearMiss,
+          minDescendingFramesRequired: debug?.minDescendingFramesRequired,
+          minBottomFramesRequired: debug?.minBottomFramesRequired,
+          minAscendingFramesRequired: debug?.minAscendingFramesRequired,
+          minTopRecoveryFramesRequired: debug?.minTopRecoveryFramesRequired,
+          rearmBlockedReason: debug?.rearmBlockedReason,
+          framesUntilRearm: debug?.framesUntilRearm,
+          rearmMissingCondition: debug?.rearmMissingCondition,
+          weakestLandmark: debug?.weakestLandmark,
+          landmarkQuality: debug?.landmarkQuality,
+          repsAttemptedEstimate: debug?.repsAttemptedEstimate,
+          repsCommitted: debug?.repsCommitted,
+          repsBlockedByBottom: debug?.repsBlockedByBottom,
+          repsBlockedByTopRecovery: debug?.repsBlockedByTopRecovery,
+          repsBlockedByRearm: debug?.repsBlockedByRearm,
+          repsBlockedByTrackingLoss: debug?.repsBlockedByTrackingLoss,
+          repsBlockedByTravel: debug?.repsBlockedByTravel,
+          repsBlockedByQuality: debug?.repsBlockedByQuality
+        });
+      } else {
+        console.log('[pushup-trial]', compact);
+      }
     }
 
     setAnswers((previous) => ({
@@ -171,21 +249,21 @@ export function useOnboardingFlow() {
   const toggleDistractingApp = (appId: AppOptionId) => {
     setAnswers((previous) => ({
       ...previous,
-      distractingApps: toggleSelection(previous.distractingApps, appId, MAX_DISTRACTING_APPS)
+      distractingApps: toggleSelection(previous.distractingApps, appId)
     }));
   };
 
   const toggleProtectedApp = (appId: AppOptionId) => {
     setAnswers((previous) => ({
       ...previous,
-      protectedApps: toggleSelection(previous.protectedApps, appId, MAX_DISTRACTING_APPS)
+      protectedApps: toggleSelection(previous.protectedApps, appId)
     }));
   };
 
   const toggleFeeling = (feelingId: FeelingOptionId) => {
     setAnswers((previous) => ({
       ...previous,
-      feelings: toggleSelection(previous.feelings, feelingId, MAX_FEELINGS)
+      feelings: toggleSelection(previous.feelings, feelingId)
     }));
   };
 
@@ -230,13 +308,44 @@ export function useOnboardingFlow() {
     toggleFeeling,
     toggleProtectedApp,
     updateName,
+    selectGoal,
     updateScrollMinutes,
+    updateTargetMinutes,
+    selectAgeRange,
+    selectReminderSlot,
+    selectExerciseType,
     selectPlan,
     selectAuthMethod,
     setPoseFrame,
     setScreenTimeSelection,
     setScreenTimeStatus,
     setShieldStatus
+  };
+}
+
+function sanitizeOnboardingAnswers(answers: OnboardingAnswers): OnboardingAnswers {
+  const toNumber = (value: unknown, fallback: number) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  const toString = (value: unknown, fallback = '') =>
+    typeof value === 'string' ? value : fallback;
+  const toArray = <T extends string>(value: unknown): T[] =>
+    Array.isArray(value) ? (value.filter((item): item is T => typeof item === 'string') as T[]) : [];
+
+  return {
+    ...answers,
+    name: toString(answers.name),
+    goalId: toString(answers.goalId) as OnboardingAnswers['goalId'],
+    distractingApps: toArray(answers.distractingApps),
+    dailyScrollMinutes: Math.max(60, Math.min(960, Math.round(toNumber(answers.dailyScrollMinutes, 96)))),
+    targetScrollMinutes: Math.max(60, Math.min(960, Math.round(toNumber(answers.targetScrollMinutes, 60)))),
+    feelings: toArray(answers.feelings),
+    ageRange: toString(answers.ageRange) as OnboardingAnswers['ageRange'],
+    attempts: toArray(answers.attempts),
+    reminderSlot: toString(answers.reminderSlot) as OnboardingAnswers['reminderSlot'],
+    exerciseType: toString(answers.exerciseType) as OnboardingAnswers['exerciseType'],
+    protectedApps: toArray(answers.protectedApps),
+    planId: toString(answers.planId, 'yearly') as OnboardingAnswers['planId'],
+    authMethod: toString(answers.authMethod) as OnboardingAnswers['authMethod']
   };
 }
 
@@ -477,20 +586,28 @@ function getCanContinue(stepId: string, answers: OnboardingAnswers) {
   switch (stepId) {
     case 'name':
       return answers.name.trim().length >= 2;
+    case 'goals':
+      return answers.goalId.length > 0;
     case 'distractingApps':
-      return answers.distractingApps.length >= 2;
+      return answers.distractingApps.length >= 1;
     case 'scrollMinutes':
       return answers.dailyScrollMinutes >= 15;
+    case 'targetMinutes':
+      return answers.targetScrollMinutes >= 10;
     case 'feelings':
       return answers.feelings.length >= 1;
+    case 'ageRange':
+      return answers.ageRange.length > 0;
     case 'attempts':
       return answers.attempts.length >= 1;
-    case 'protectApps':
-      return answers.protectedApps.length >= 1;
+    case 'reminderTime':
+      return answers.reminderSlot.length > 0;
+    case 'exerciseChoice':
+      return answers.exerciseType.length > 0;
     case 'screenTimePermission':
       return answers.screenTimeStatus === 'unsupported' || (answers.screenTimeStatus === 'approved' && answers.screenTimeSelection.hasSelection);
     case 'pushUpTrial':
-      return answers.pushUpTestPassed;
+      return true;
     case 'auth':
       return AUTH_METHOD_OPTIONS.some((option) => option.id === answers.authMethod);
     default:

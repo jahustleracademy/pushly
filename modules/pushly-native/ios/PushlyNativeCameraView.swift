@@ -380,6 +380,7 @@ final class PushlyNativeCameraView: ExpoView {
         reacquireActive: continuityTracker.state != .tracking,
         pushupFloorModeActive: continuityTracker.pushupFloorModeActive
       )
+      let fallbackDiagnostics = temporalTracker.fallbackDiagnostics
       diagnostics.endSignpost(smoothingSignpost)
 
       let allowsRendering = continuityTracker.poseState.allowsRendering
@@ -491,7 +492,13 @@ final class PushlyNativeCameraView: ExpoView {
       )
       diagnostics.endSignpost(qualitySignpost)
 
-      let rep = repDetector.update(joints: jointsForLogic, quality: quality, repTarget: repTarget)
+      let rep = repDetector.update(
+        joints: jointsForLogic,
+        quality: quality,
+        repTarget: repTarget,
+        frameIndex: frameIndex,
+        timestamp: nowClock
+      )
       let bottomPhaseActive = rep.state == .bottomReached || rep.state == .ascending || rep.state == .descending
       let bottomRenderPersistenceActive = pushupBottomOcclusionCandidate && isRenderGraceActive
       let torsoAnchorAvailable = hasTorsoAnchor(in: floorRenderJoints.isEmpty ? jointsForRender : floorRenderJoints)
@@ -605,7 +612,8 @@ final class PushlyNativeCameraView: ExpoView {
         instruction: latestInstructionText,
         lowLightDetected: processed.lowLightDetected,
         backend: processed.backend,
-        backendDebug: latestBackendDebugState
+        backendDebug: latestBackendDebugState,
+        fallbackDiagnostics: fallbackDiagnostics
       )
     } catch {
       latestBackendDebugState = poseCoordinator.lastBackendDebugState
@@ -733,9 +741,9 @@ final class PushlyNativeCameraView: ExpoView {
       "upperBodyCoverage": 0,
       "fullBodyCoverage": 0,
       "handCoverage": 0,
-      "cameraFPS": latestCameraTelemetry?.captureFPS,
-      "cameraProcessingBacklog": latestCameraTelemetry?.processingBacklog,
-      "cameraAverageProcessingMs": latestCameraTelemetry?.averageProcessingMs,
+      "cameraFPS": latestCameraTelemetry?.captureFPS as Any,
+      "cameraProcessingBacklog": latestCameraTelemetry?.processingBacklog as Any,
+      "cameraAverageProcessingMs": latestCameraTelemetry?.averageProcessingMs as Any,
       "processingFPS": currentPoseFPS
     ])
   }
@@ -758,7 +766,8 @@ final class PushlyNativeCameraView: ExpoView {
     instruction: String,
     lowLightDetected: Bool,
     backend: PoseBackendKind,
-    backendDebug: PoseBackendDebugState? = nil
+    backendDebug: PoseBackendDebugState? = nil,
+    fallbackDiagnostics: TemporalJointTracker.FallbackTrackingDiagnostics
   ) {
     let now = Date()
     guard now.timeIntervalSince(lastEmit) >= config.pipeline.minEmitInterval else { return }
@@ -780,7 +789,8 @@ final class PushlyNativeCameraView: ExpoView {
       mirrored: latestMirrored,
       debugSessionID: diagnostics.sessionIdentifier,
       visibleJointCount: joints.count,
-      backendDebug: backendDebug
+      backendDebug: backendDebug,
+      fallbackDiagnostics: fallbackDiagnostics
     )
 
     updateFeedbackLabel(instruction)

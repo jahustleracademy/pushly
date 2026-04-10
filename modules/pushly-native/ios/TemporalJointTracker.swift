@@ -125,6 +125,16 @@ private struct OneEuroJointFilter {
 }
 
 final class TemporalJointTracker {
+  struct FallbackTrackingDiagnostics {
+    let sourceTypeTransitions: [String: Int]
+    let visibilityHysteresisRequiredVisibleCount: Int
+    let visibilityHysteresisRequiredTotal: Int
+    let requiredAnchorCoverage: Double
+    let fallbackAnchorStrength: Double
+    let weakestRequiredLandmark: String?
+    let weakestRequiredLandmarkConfidence: Double
+  }
+
   struct SideIdentityDiagnostics {
     let lockSwapped: Bool
     let swapEvidenceStreak: Int
@@ -202,6 +212,10 @@ final class TemporalJointTracker {
   private let sideEvidenceConfidenceMin: Float = 0.22
   private let sideEvidenceMinWeight: Double = 1.4
   private let sideCostMargin: CGFloat = 0.015
+  private let pushupAnchorRelaxedGateMultiplier: Float = 0.82
+  private let pushupAnchorHistoryEnterMultiplier: Float = 0.78
+  private let pushupArmInferenceRenderScale: Float = 0.58
+  private let pushupArmInferenceVisibilityScale: Float = 0.7
   private let sideChainEvidence: [SideChainEvidence] = [
     SideChainEvidence(left: [.leftShoulder, .leftElbow, .leftWrist], right: [.rightShoulder, .rightElbow, .rightWrist], weight: 1.2),
     SideChainEvidence(left: [.leftHip, .leftKnee, .leftAnkle], right: [.rightHip, .rightKnee, .rightAnkle], weight: 1.15),
@@ -222,6 +236,15 @@ final class TemporalJointTracker {
   private var sideKeepEvidenceStreak = 0
   private var swapAppliedThisFrame = false
   private var sideSwapBlockedUntil: TimeInterval = 0
+  private var fallbackTrackingDiagnostics = FallbackTrackingDiagnostics(
+    sourceTypeTransitions: [:],
+    visibilityHysteresisRequiredVisibleCount: 0,
+    visibilityHysteresisRequiredTotal: 8,
+    requiredAnchorCoverage: 0,
+    fallbackAnchorStrength: 0,
+    weakestRequiredLandmark: nil,
+    weakestRequiredLandmarkConfidence: 0
+  )
 
   var sideIdentityDiagnostics: SideIdentityDiagnostics {
     SideIdentityDiagnostics(
@@ -230,6 +253,10 @@ final class TemporalJointTracker {
       keepEvidenceStreak: sideKeepEvidenceStreak,
       swapAppliedThisFrame: swapAppliedThisFrame
     )
+  }
+
+  var fallbackDiagnostics: FallbackTrackingDiagnostics {
+    fallbackTrackingDiagnostics
   }
 
   init(config: PushlyPoseConfig) {
@@ -287,7 +314,8 @@ final class TemporalJointTracker {
           now: frameTimestamp,
           dt: dt,
           lowLightDetected: lowLightDetected,
-          roiHint: roiHint
+          roiHint: roiHint,
+          pushupFloorModeActive: pushupFloorModeActive
         )
         next[jointName] = tracked
         continue
@@ -317,6 +345,10 @@ final class TemporalJointTracker {
     for jointName in PushlyJointName.allCases {
       hysteresisVisibilityByJoint[jointName] = next[jointName]?.sourceType != .missing && next[jointName] != nil
     }
+    fallbackTrackingDiagnostics = buildFallbackTrackingDiagnostics(
+      previous: stateByJoint,
+      next: next
+    )
 
     stateByJoint = Dictionary(uniqueKeysWithValues: next.map { name, joint in
       let previousMeasuredAt = stateByJoint[name]?.lastMeasuredTime ?? joint.timestamp
@@ -368,6 +400,15 @@ final class TemporalJointTracker {
     sideKeepEvidenceStreak = 0
     swapAppliedThisFrame = false
     sideSwapBlockedUntil = 0
+    fallbackTrackingDiagnostics = FallbackTrackingDiagnostics(
+      sourceTypeTransitions: [:],
+      visibilityHysteresisRequiredVisibleCount: 0,
+      visibilityHysteresisRequiredTotal: 8,
+      requiredAnchorCoverage: 0,
+      fallbackAnchorStrength: 0,
+      weakestRequiredLandmark: nil,
+      weakestRequiredLandmarkConfidence: 0
+    )
     lastValidFrameTime = nil
     lastTimestamp = 0
   }
@@ -384,12 +425,17 @@ final class TemporalJointTracker {
     now: TimeInterval,
     dt: TimeInterval,
     lowLightDetected: Bool,
-    roiHint _: CGRect?
+    roiHint _: CGRect?,
+    pushupFloorModeActive: Bool
   ) -> TrackedJoint {
     let previous = stateByJoint[measurement.name]
     let previousSmoothed = previous?.smoothedPosition ?? measurement.point
 
-    let sourceType = sourceTypeForMeasurement(measurement, hasHistory: previous != nil)
+    let sourceType = sourceTypeForMeasurement(
+      measurement,
+      hasHistory: previous != nil,
+      pushupFloorModeActive: pushupFloorModeActive
+    )
     hysteresisVisibilityByJoint[measurement.name] = sourceType != .missing
 
     var oneEuro = filtersByJoint[measurement.name] ?? OneEuroJointFilter()
@@ -567,7 +613,11 @@ final class TemporalJointTracker {
     )
   }
 
-  private func sourceTypeForMeasurement(_ measurement: PoseJointMeasurement, hasHistory: Bool) -> PushlyJointSourceType {
+  private func sourceTypeForMeasurement(
+    _ measurement: PoseJointMeasurement,
+    hasHistory: Bool,
+    pushupFloorModeActive: Bool
+  ) -> PushlyJointSourceType {
     if measurement.sourceType == .missing {
       return .missing
     }
@@ -578,7 +628,11 @@ final class TemporalJointTracker {
       return .predicted
     }
 
-    let gateOpen = confidenceGateAllowsTracking(measurement)
+    let gateOpen = confidenceGateAllowsTracking(
+      measurement,
+      hasHistory: hasHistory,
+      pushupFloorModeActive: pushupFloorModeActive
+    )
     guard gateOpen else {
       return hasHistory ? .inferred : .missing
     }
@@ -587,20 +641,41 @@ final class TemporalJointTracker {
     if confidence >= config.tracker.confidenceHysteresisEnter {
       return .measured
     }
-    if confidence >= config.tracker.confidenceHysteresisExit {
+    let relaxedLowConfidenceExit =
+      pushupFloorModeActive && hasHistory && isPushupAnchorJoint(measurement.name)
+      ? config.tracker.confidenceHysteresisExit * pushupAnchorRelaxedGateMultiplier
+      : config.tracker.confidenceHysteresisExit
+    if confidence >= relaxedLowConfidenceExit {
       return .lowConfidenceMeasured
     }
     return hasHistory ? .inferred : .lowConfidenceMeasured
   }
 
-  private func confidenceGateAllowsTracking(_ measurement: PoseJointMeasurement) -> Bool {
+  private func confidenceGateAllowsTracking(
+    _ measurement: PoseJointMeasurement,
+    hasHistory: Bool,
+    pushupFloorModeActive: Bool
+  ) -> Bool {
     let wasVisible = hysteresisVisibilityByJoint[measurement.name] ?? false
     let support = min(measurement.visibility, measurement.presence)
     let evidence = measurement.inFrame ? min(measurement.confidence, support) : measurement.confidence * 0.5
+    let isPushupAnchor = pushupFloorModeActive && isPushupAnchorJoint(measurement.name)
+
+    if isPushupAnchor && wasVisible {
+      let relaxedExit = config.tracker.confidenceHysteresisExit * pushupAnchorRelaxedGateMultiplier
+      return measurement.confidence >= relaxedExit
+        || support >= relaxedExit
+        || evidence >= max(config.tracker.measuredConfidenceMin, relaxedExit * 0.95)
+    }
 
     if wasVisible {
       return measurement.confidence >= config.tracker.confidenceHysteresisExit
         || support >= config.tracker.confidenceHysteresisExit
+    }
+
+    if isPushupAnchor && hasHistory {
+      let relaxedEnter = config.tracker.confidenceHysteresisEnter * pushupAnchorHistoryEnterMultiplier
+      return evidence >= max(config.tracker.measuredConfidenceMin * 1.8, relaxedEnter)
     }
 
     return evidence >= config.tracker.confidenceHysteresisEnter
@@ -767,12 +842,14 @@ final class TemporalJointTracker {
     wristJoint.smoothedPosition = estimated
     wristJoint.velocity = .zero
     wristJoint.rawConfidence = 0
-    wristJoint.renderConfidence = min(shoulderJoint.renderConfidence, elbowJoint.renderConfidence) * 0.5
+    wristJoint.renderConfidence = min(shoulderJoint.renderConfidence, elbowJoint.renderConfidence)
+      * (pushupFloorModeActive ? pushupArmInferenceRenderScale : 0.5)
     wristJoint.logicConfidence = pushupFloorModeActive
       ? min(0.17, max(0.12, wristJoint.renderConfidence * 0.3))
       : max(0.18, wristJoint.renderConfidence * 0.42)
-    wristJoint.visibility = min(shoulderJoint.visibility, elbowJoint.visibility) * 0.6
-    wristJoint.presence = min(shoulderJoint.presence, elbowJoint.presence) * 0.6
+    let armVisibilityScale: Float = pushupFloorModeActive ? pushupArmInferenceVisibilityScale : 0.6
+    wristJoint.visibility = min(shoulderJoint.visibility, elbowJoint.visibility) * armVisibilityScale
+    wristJoint.presence = min(shoulderJoint.presence, elbowJoint.presence) * armVisibilityScale
     wristJoint.inFrame = true
     wristJoint.sourceType = .inferred
     wristJoint.timestamp = now
@@ -1062,6 +1139,86 @@ final class TemporalJointTracker {
     default:
       return false
     }
+  }
+
+  private func isPushupAnchorJoint(_ name: PushlyJointName) -> Bool {
+    switch name {
+    case .leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist, .leftHip, .rightHip:
+      return true
+    default:
+      return false
+    }
+  }
+
+  private func buildFallbackTrackingDiagnostics(
+    previous: [PushlyJointName: JointTrackState],
+    next: [PushlyJointName: TrackedJoint]
+  ) -> FallbackTrackingDiagnostics {
+    let required: [PushlyJointName] = [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist, .leftHip, .rightHip]
+    var transitions: [String: Int] = [:]
+    var anchorStrengthSum = 0.0
+    var anchorRenderableCount = 0
+    var weakestName: String?
+    var weakestConfidence = Double.greatestFiniteMagnitude
+    var visibleRequired = 0
+
+    for name in required {
+      let previousType = previous[name]?.sourceType ?? .missing
+      let nextType = next[name]?.sourceType ?? .missing
+      if previousType != nextType {
+        let key = "\(previousType.rawValue)->\(nextType.rawValue)"
+        transitions[key, default: 0] += 1
+      }
+
+      if hysteresisVisibilityByJoint[name] == true {
+        visibleRequired += 1
+      }
+
+      guard let joint = next[name] else {
+        if 0 < weakestConfidence {
+          weakestConfidence = 0
+          weakestName = name.rawValue
+        }
+        continue
+      }
+
+      let confidence = Double(joint.renderConfidence)
+      if confidence < weakestConfidence {
+        weakestConfidence = confidence
+        weakestName = name.rawValue
+      }
+
+      guard joint.isRenderable else { continue }
+      anchorRenderableCount += 1
+      let sourceWeight: Double
+      switch joint.sourceType {
+      case .measured:
+        sourceWeight = 1
+      case .lowConfidenceMeasured:
+        sourceWeight = 0.86
+      case .inferred:
+        sourceWeight = 0.66
+      case .predicted:
+        sourceWeight = 0.32
+      case .missing:
+        sourceWeight = 0
+      }
+      anchorStrengthSum += sourceWeight * confidence
+    }
+
+    let requiredTotal = required.count
+    let anchorCoverage = requiredTotal > 0 ? Double(anchorRenderableCount) / Double(requiredTotal) : 0
+    let anchorStrength = requiredTotal > 0 ? min(1, max(0, anchorStrengthSum / Double(requiredTotal))) : 0
+    let resolvedWeakestConfidence = weakestConfidence.isFinite ? weakestConfidence : 0
+    return FallbackTrackingDiagnostics(
+      sourceTypeTransitions: transitions,
+      visibilityHysteresisRequiredVisibleCount: visibleRequired,
+      visibilityHysteresisRequiredTotal: requiredTotal,
+      requiredAnchorCoverage: anchorCoverage,
+      fallbackAnchorStrength: anchorStrength,
+      weakestRequiredLandmark: weakestName,
+      weakestRequiredLandmarkConfidence: resolvedWeakestConfidence
+    )
   }
 
   private func clamp01(_ point: CGPoint) -> CGPoint {

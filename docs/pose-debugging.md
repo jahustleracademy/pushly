@@ -116,9 +116,23 @@ Capture behavior:
 ## Count-Blocking Signals
 When count does not increment, inspect:
 - cycle/state: `descendingFrames`, `bottomFrames`, `ascendingFrames`, `bottomReached`,
-- readiness: `cycleCoreReady`, `strictCycleReady`, `floorFallbackCycleReady`,
+- v1 path: `topReady`, `descendingStarted`, `bottomLatched`, `ascendingStarted`, `topRecovered`, `repCommitted`,
 - gate status: `countGatePassed`, `countGateBlocked`, `countGateBlockReason`,
-- common reasons: `rearm_pending`, `travel_cycle_incomplete`, `top_recovery_incomplete`, `tracking_quality_low`, `measured_evidence_low`, `body_not_found`.
+- common reasons: `top_not_ready`, `descending_not_started`, `bottom_not_latched`, `ascending_not_started`, `top_not_recovered`, `commit_safety_low`, `body_not_found`.
+
+### Push-up v1 Gate Scope (Current)
+- does NOT block active rep commit anymore:
+  - `cycleLogicGate`
+  - `motionTravelGate`
+  - `strictCycleReady`
+  - `floorFallbackCycleReady`
+  - `rearmGate` (only post-commit)
+- minimum safety only for commit:
+  - `commit_safety_low` (relaxed logic/tracking/evidence floor)
+- reset/abort only:
+  - `movement_collapsed`
+  - `no_recovery_within_timeout`
+  - `motion_pattern_invalid`
 
 ## Push-up Trial Quick Reference
 Use this minimal field set first before deep-diving into full frame telemetry:

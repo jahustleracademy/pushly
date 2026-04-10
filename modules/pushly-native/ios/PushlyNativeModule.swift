@@ -11,6 +11,8 @@ import UIKit
 private let pushlyAppGroup = "group.com.pushly.shared"
 private let pushlySelectionKey = "pushly.familyActivitySelection"
 private let pushlySelectionUpdatedAtKey = "pushly.familyActivitySelectionUpdatedAt"
+private let pushlySharedCreditsSnapshotKey = "pushly.creditsSnapshot.v1"
+private let pushlyPendingShieldRedeemIntentKey = "pushly.pendingShieldRedeemIntent.v1"
 #if os(iOS)
 private let pushlyMonitoringActiveKey = "pushly.deviceActivityMonitoringActive"
 private let pushlyMonitoringActivity = DeviceActivityName("pushly.daily.monitor")
@@ -201,6 +203,45 @@ public final class PushlyNativeModule: Module {
       }
       #else
       return ["path": ""]
+      #endif
+    }
+
+    AsyncFunction("getSharedCreditsSnapshotAsync") { () -> String? in
+      #if os(iOS)
+      return UserDefaults(suiteName: pushlyAppGroup)?.string(forKey: pushlySharedCreditsSnapshotKey)
+      #else
+      return nil
+      #endif
+    }
+
+    AsyncFunction("setSharedCreditsSnapshotAsync") { (snapshot: String) in
+      #if os(iOS)
+      UserDefaults(suiteName: pushlyAppGroup)?.set(snapshot, forKey: pushlySharedCreditsSnapshotKey)
+      #endif
+    }
+
+    AsyncFunction("getPendingShieldRedeemIntentAsync") { () -> String? in
+      #if os(iOS)
+      return UserDefaults(suiteName: pushlyAppGroup)?.string(forKey: pushlyPendingShieldRedeemIntentKey)
+      #else
+      return nil
+      #endif
+    }
+
+    AsyncFunction("setPendingShieldRedeemIntentAsync") { (intent: String) in
+      #if os(iOS)
+      UserDefaults(suiteName: pushlyAppGroup)?.set(intent, forKey: pushlyPendingShieldRedeemIntentKey)
+      #endif
+    }
+
+    AsyncFunction("consumePendingShieldRedeemIntentAsync") { () -> String? in
+      #if os(iOS)
+      let defaults = UserDefaults(suiteName: pushlyAppGroup)
+      let intent = defaults?.string(forKey: pushlyPendingShieldRedeemIntentKey)
+      defaults?.removeObject(forKey: pushlyPendingShieldRedeemIntentKey)
+      return intent
+      #else
+      return nil
       #endif
     }
 

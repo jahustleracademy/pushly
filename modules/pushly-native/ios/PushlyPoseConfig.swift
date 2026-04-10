@@ -169,26 +169,26 @@ struct PushlyPoseConfig {
     let bottomConfirmFrames: Int = 2
     let ascendingConfirmFrames: Int = 2
     let minRepAngleTravel: CGFloat = 34
-    let torsoSmoothAlpha: CGFloat = 0.28
+    let torsoSmoothAlpha: CGFloat = 0.31
     // Detector coordinates use normalized Y where larger means visually higher in frame.
     // Therefore descent (toward floor) appears as negative Y velocity and ascent as positive.
-    let torsoVelocityMinForDescent: CGFloat = 0.00062
-    let torsoVelocityMinForAscent: CGFloat = 0.00048
+    let torsoVelocityMinForDescent: CGFloat = 0.0006
+    let torsoVelocityMinForAscent: CGFloat = 0.00047
     let minShoulderHipLineQuality: Double = 0.24
     let floorMinShoulderHipLineQuality: Double = 0.2
     let minTorsoDownTravelForBottom: CGFloat = 0.01
-    let minTorsoCycleTravel: CGFloat = 0.016
-    let minTorsoRecoveryTravel: CGFloat = 0.01
-    let maxTorsoTopRecoveryOffset: CGFloat = 0.03
-    let shoulderVelocityMinForDescent: CGFloat = 0.0008
-    let shoulderVelocityMinForAscent: CGFloat = 0.00055
+    let minTorsoCycleTravel: CGFloat = 0.015
+    let minTorsoRecoveryTravel: CGFloat = 0.0095
+    let maxTorsoTopRecoveryOffset: CGFloat = 0.034
+    let shoulderVelocityMinForDescent: CGFloat = 0.00076
+    let shoulderVelocityMinForAscent: CGFloat = 0.00053
     let elbowVelocityMinForDescent: CGFloat = 0.42
     let elbowVelocityMinForAscent: CGFloat = 0.42
     let floorElbowVelocityMinForDescent: CGFloat = 0.3
     let floorElbowVelocityMinForAscent: CGFloat = 0.3
     let minShoulderDownTravelForBottom: CGFloat = 0.009
-    let minShoulderCycleTravel: CGFloat = 0.013
-    let minShoulderRecoveryTravel: CGFloat = 0.01
+    let minShoulderCycleTravel: CGFloat = 0.012
+    let minShoulderRecoveryTravel: CGFloat = 0.0095
     let bilateralElbowMaxAngleDelta: CGFloat = 42
     let bottomOcclusionGraceFrames: Int = 8
     let repRearmConfirmFrames: Int = 2
@@ -198,7 +198,11 @@ struct PushlyPoseConfig {
     let floorStateNoseShoulderDeltaMax: Double = 0.12
     let floorStateShoulderHipDeltaMax: Double = 0.2
     let elbowSmoothAlpha: CGFloat = 0.34
-    let shoulderSmoothAlpha: CGFloat = 0.3
+    let shoulderSmoothAlpha: CGFloat = 0.31
+    let fastBottomTravelMultiplier: CGFloat = 1.7
+    let rearmTopRecoveryOffsetMultiplier: CGFloat = 1.08
+    let rearmDecayGraceFrames: Int = 1
+    let crossAxisSupportFactor: CGFloat = 0.56
   }
 
   struct Pipeline {

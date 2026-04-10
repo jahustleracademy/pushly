@@ -23,6 +23,11 @@ declare class PushlyNativeModule extends NativeModule<PushlyNativeModuleEvents> 
   getDeviceActivityMonitoringStatusAsync(): Promise<DeviceActivityMonitoringStatus>;
   isPoseEngineAvailableAsync(): Promise<boolean>;
   exportPoseDebugSessionAsync(): Promise<PoseDebugExportResult>;
+  getSharedCreditsSnapshotAsync(): Promise<string | null>;
+  setSharedCreditsSnapshotAsync(snapshot: string): Promise<void>;
+  getPendingShieldRedeemIntentAsync(): Promise<string | null>;
+  setPendingShieldRedeemIntentAsync(intent: string): Promise<void>;
+  consumePendingShieldRedeemIntentAsync(): Promise<string | null>;
 }
 
 export default requireNativeModule<PushlyNativeModule>('PushlyNative');

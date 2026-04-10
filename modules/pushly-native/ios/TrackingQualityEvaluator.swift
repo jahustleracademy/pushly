@@ -55,10 +55,12 @@ final class TrackingQualityEvaluator {
     if poseMode == .fullBody && max(mergedCoverage.fullBodyCoverage, lowerBodySupport) < config.mode.fullBodyCoverageLost && !pushupFloorState {
       reasons.append("lower_body_missing")
     }
-    if torsoScore < 0.32 {
+    let torsoWeakThreshold = pushupFloorState ? 0.27 : 0.32
+    if torsoScore < torsoWeakThreshold {
       reasons.append("torso_weak")
     }
-    if armScore < 0.34 {
+    let armWeakThreshold = pushupFloorState ? 0.3 : 0.34
+    if armScore < armWeakThreshold {
       reasons.append("arm_weak")
     }
     if smoothedSpread < (pushupFloorState ? 0.2 : 0.24) {
@@ -249,10 +251,14 @@ final class TrackingQualityEvaluator {
     }
     let predictedRatio = Double(visible.filter { $0.sourceType == .predicted }.count) / Double(visible.count)
     let lowerBodyJoints: Set<PushlyJointName> = [.leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle, .leftFoot, .rightFoot]
+    let pushupUpperAnchorJoints: Set<PushlyJointName> = [.leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist]
     let inferredPenalty = visible.reduce(0.0) { partial, joint in
       guard joint.sourceType == .inferred else { return partial }
       if floorState && lowerBodyJoints.contains(joint.name) {
-        return partial + 0.12
+        return partial + 0.1
+      }
+      if floorState && pushupUpperAnchorJoints.contains(joint.name) {
+        return partial + 0.2
       }
       return partial + 0.35
     } / Double(visible.count)
@@ -282,18 +288,36 @@ final class TrackingQualityEvaluator {
   }
 
   private func isLikelyPushupFloorState(joints: [PushlyJointName: TrackedJoint]) -> Bool {
-    guard let nose = joints[.nose], nose.isRenderable else {
-      return false
-    }
     let shoulderMid = midpoint(joints[.leftShoulder]?.smoothedPosition, joints[.rightShoulder]?.smoothedPosition)
     guard let shoulderMid else {
       return false
     }
+    let leftShoulder = joints[.leftShoulder]?.isRenderable == true
+    let rightShoulder = joints[.rightShoulder]?.isRenderable == true
+    let shoulderPairVisible = leftShoulder && rightShoulder
+    let hipVisible = joints[.leftHip]?.isRenderable == true || joints[.rightHip]?.isRenderable == true
+    let armSegmentVisible =
+      ((joints[.leftShoulder]?.isRenderable == true && joints[.leftElbow]?.isRenderable == true) ||
+       (joints[.leftElbow]?.isRenderable == true && joints[.leftWrist]?.isRenderable == true)) ||
+      ((joints[.rightShoulder]?.isRenderable == true && joints[.rightElbow]?.isRenderable == true) ||
+       (joints[.rightElbow]?.isRenderable == true && joints[.rightWrist]?.isRenderable == true))
+    guard shoulderPairVisible || (hipVisible && armSegmentVisible) else {
+      return false
+    }
+
+    if let nose = joints[.nose], nose.isRenderable {
+      let shoulderSpan = hypot(
+        (joints[.rightShoulder]?.smoothedPosition.x ?? shoulderMid.x) - (joints[.leftShoulder]?.smoothedPosition.x ?? shoulderMid.x),
+        (joints[.rightShoulder]?.smoothedPosition.y ?? shoulderMid.y) - (joints[.leftShoulder]?.smoothedPosition.y ?? shoulderMid.y)
+      )
+      return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < 0.16 && Double(shoulderSpan) > 0.08
+    }
+
     let shoulderSpan = hypot(
       (joints[.rightShoulder]?.smoothedPosition.x ?? shoulderMid.x) - (joints[.leftShoulder]?.smoothedPosition.x ?? shoulderMid.x),
       (joints[.rightShoulder]?.smoothedPosition.y ?? shoulderMid.y) - (joints[.leftShoulder]?.smoothedPosition.y ?? shoulderMid.y)
     )
-    return abs(Double(nose.smoothedPosition.y - shoulderMid.y)) < 0.16 && Double(shoulderSpan) > 0.08
+    return Double(shoulderSpan) > 0.07 && armSegmentVisible
   }
 
   private func midpoint(_ a: CGPoint?, _ b: CGPoint?) -> CGPoint? {

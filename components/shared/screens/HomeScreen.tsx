@@ -6,57 +6,78 @@ import { Card } from '@/components/ui/Card';
 import { Text } from '@/components/ui/Text';
 import { Button } from '@/components/ui/Button';
 import { useTheme } from '@/components/shared/ThemeProvider';
+import { useCreditsDashboard } from '@/features/credits';
 
 export function HomeScreen() {
   const { theme } = useTheme();
+  const { state, availableMinutes, todayPushups, todayRedeemedMinutes, remainingUnlockMs, remainingUnlockLabel } = useCreditsDashboard();
 
   return (
     <Screen>
       <View style={styles.top}>
         <Image source={require('../../../assets/images/logo_header.png')} style={styles.logo} resizeMode="contain" />
-        <Text variant="title">Dein Schutz ist jetzt nativ aufgesetzt.</Text>
+        <Text variant="title">Heute zaehlt jede Wiederholung.</Text>
         <Text variant="body" style={{ color: theme.colors.textMuted }}>
-          Onboarding, iOS Screen-Time-Basis, Device-Activity-Target und die Live-Pose-Pipeline sind in Pushly verankert.
+          Sammle Credits mit Push-ups und loese sie spaeter als Free Time ein.
         </Text>
       </View>
 
       <Card style={styles.heroCard}>
         <Text variant="caption" style={{ color: theme.colors.accent }}>
-          SYSTEM STATUS
+          DAILY DASHBOARD
         </Text>
-        <Text variant="heading">Pushly V1 schützt deine Trigger-Apps mit Reibung statt Erinnerung.</Text>
-        <Text variant="body" style={{ color: theme.colors.textMuted }}>
-          Die App verfügt jetzt über echte iOS-Scaffolds für Family Controls, Shield-Aktivierung und Vision-basierte Push-up-Erkennung.
-        </Text>
+        <Text variant="heading">{state.dailyCredits.balance} Credits verfuegbar</Text>
+        <Text variant="body" style={{ color: theme.colors.textMuted }}>{availableMinutes} Minuten Free Time moeglich.</Text>
       </Card>
 
       <View style={styles.metricRow}>
         <Card style={styles.metricCard}>
           <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-            Unlock-Regel
+            Push-ups heute
           </Text>
-          <Text variant="heading">Liegestütze</Text>
+          <Text variant="heading">{todayPushups}</Text>
         </Card>
         <Card style={styles.metricCard}>
           <Text variant="caption" style={{ color: theme.colors.textMuted }}>
-            Native Basis
+            Verdient heute
           </Text>
-          <Text variant="heading">iOS first</Text>
+          <Text variant="heading">{state.dailyCredits.earned} Credits</Text>
+        </Card>
+      </View>
+
+      <View style={styles.metricRow}>
+        <Card style={styles.metricCard}>
+          <Text variant="caption" style={{ color: theme.colors.textMuted }}>
+            Eingeloest heute
+          </Text>
+          <Text variant="heading">{todayRedeemedMinutes} Min</Text>
+        </Card>
+        <Card style={styles.metricCard}>
+          <Text variant="caption" style={{ color: theme.colors.textMuted }}>
+            Verbleibend
+          </Text>
+          <Text variant="heading">{state.dailyCredits.balance} Credits</Text>
         </Card>
       </View>
 
       <Card style={styles.actionCard}>
-        <Text variant="heading">Bereite Bereiche</Text>
-        <Text variant="body" style={{ color: theme.colors.textMuted }}>
-          Die Session-Fläche zeigt dir als Nächstes die native Kamera-/Pose-Schicht, und in den Einstellungen hängen wir echte Schutz- und Account-Flows an.
-        </Text>
+        <Text variant="heading">Heute aktiv</Text>
+        {state.activeUnlockWindow && remainingUnlockMs > 0 ? (
+          <Text variant="body" style={{ color: theme.colors.accent }}>
+            Unlock aktiv: noch {remainingUnlockLabel}
+          </Text>
+        ) : (
+          <Text variant="body" style={{ color: theme.colors.textMuted }}>
+            Kein aktives Unlock-Fenster.
+          </Text>
+        )}
 
         <View style={styles.actions}>
           <Link href="/session" asChild>
-            <Button label="Detektion ansehen" />
+            <Button label="Push-ups starten" />
           </Link>
-          <Link href="/progress" asChild>
-            <Button label="Verlauf ansehen" variant="secondary" />
+          <Link href="/redeem" asChild>
+            <Button label="Zeit einloesen" variant="secondary" />
           </Link>
         </View>
       </Card>
